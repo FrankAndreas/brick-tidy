@@ -109,3 +109,23 @@ button:disabled { opacity: .5; cursor: default; }
   background: var(--text); color: var(--bg); border-radius: 10px;
 }
 .empty { text-align: center; padding: 24px; color: var(--muted); }
+
+.photo-wrap { position: relative; margin-top: 8px; line-height: 0; }
+.photo-wrap img { width: 100%; height: auto; border-radius: 8px; }
+.boxes { position: absolute; inset: 0; }
+.box {
+  position: absolute; min-height: 0; padding: 0;
+  background: transparent; border: 2px dashed rgba(255, 255, 255, .9); border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .45);
+  color: #fff; font-weight: 700; font-size: 1rem; align-items: flex-start; justify-content: flex-end;
+}
+.box.wanted { border: 3px solid var(--accent); box-shadow: 0 0 0 2px #fff; }
+.box.found { border: 3px solid var(--ok); }
+.box.selected { outline: 3px solid #ffd500; outline-offset: 2px; }
+.selected-brick:not(:empty) { margin-top: 12px; display: grid; gap: 10px; }
+.brick-summary img { width: 72px; height: 72px; object-fit: contain; background: #fff; border-radius: 8px; }
+.details .card { margin: 0; padding: 0; border: 0; }
+.legend { display: inline-block; width: 14px; height: 10px; border-radius: 3px; vertical-align: 0; }
+.legend.wanted { border: 3px solid var(--accent); }
+.legend.found { border: 3px solid var(--ok); }
+.legend.other { border: 2px dashed var(--muted); }

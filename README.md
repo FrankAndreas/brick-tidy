@@ -20,13 +20,16 @@ cd backend && .venv/bin/uvicorn app.main:create_app --factory --reload --host 0.
 Copy `.env.example` to `.env` to change settings. The catalog import can be re-run at any time to
 refresh the Rebrickable data; projects are kept.
 
-**Status:** roadmap steps 1–3 are implemented:
+**Status:** roadmap steps 1–4 are implemented:
 
 - **Set identification:** start a project by typing the set number, or by photographing the box,
   instructions or partial build. Brickognize suggests sets; when it is unsure, fails or finds nothing,
   Claude is asked too (only if `ANTHROPIC_API_KEY` is set). You pick the set from the suggestions.
 - **Detection and recognition:** photograph a small batch of bricks spread out on a plain surface;
   each brick is cropped (OpenCV), recognized by Brickognize, and offered for review.
+- **Find bricks:** photos of loose bricks are shown with a box around each brick; parts the set still
+  needs are highlighted. Tap a box and pick the brick's color to mark it as found. Colors are not
+  recognized yet, so a highlighted part may be needed only in another color.
 - **Review and missing list:** confirm or correct each brick, list parts by hand, view the missing
   list and export it as CSV. Brickognize returns BrickLink part IDs. These are mapped to the set's
   Rebrickable part numbers via Rebrickable's mold, alternate and print relationships

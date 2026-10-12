@@ -151,6 +151,35 @@ def test_upload_with_several_bricks_creates_one_detection_per_crop(client, proje
     assert [d["id"] for d in listed] == [later["id"]] + [d["id"] for d in detections]
 
 
+def test_pile_photos_mark_wanted_bricks(client, project, brickognize):
+    pid = project["id"]
+    image = make_photo_bytes([(100, 100, 240, 120, RED), (800, 150, 120, 120, BLUE)])
+    upload(client, pid, kind="pile", image=image)
+    upload(client, pid, kind="build")
+
+    [photo] = client.get(f"/api/projects/{pid}/photos", params={"kind": "pile"}).json()
+    assert photo["kind"] == "pile" and photo["url"].startswith(f"/media/photos/{pid}/")
+    assert [d["wanted"] for d in photo["detections"]] == [True, True]  # 3001 is missing
+    assert photo["wanted"] == 2
+
+    # Once every 2x4 brick is present, new pile photos no longer want it.
+    client.post(f"/api/projects/{pid}/parts", json={"part_num": "3001", "color_id": 4, "quantity": 4})
+    client.post(f"/api/projects/{pid}/parts", json={"part_num": "3001", "color_id": 71})
+    photo = client.get(f"/api/projects/{pid}/photos", params={"kind": "pile"}).json()[0]
+    assert [d["wanted"] for d in photo["detections"]] == [False, False]
+    assert photo["wanted"] == 0
+    assert len(client.get(f"/api/projects/{pid}/photos").json()) == 2
+
+
+def test_suggestion_prefers_a_color_that_is_still_missing(client, project):
+    pid = project["id"]
+    # Red 2x4: 4 needed, 4 present; light bluish gray: 1 needed, 0 present.
+    client.post(f"/api/projects/{pid}/parts", json={"part_num": "3001", "color_id": 4, "quantity": 4})
+    detection = upload(client, pid, kind="pile").json()["detections"][0]
+    assert detection["suggestion"] == {"part_num": "3001", "color_id": 71}
+    assert detection["wanted"] is True
+
+
 def test_rejects_unreadable_image(client, project, settings):
     response = upload(client, project["id"], image=b"not really a jpeg")
     assert response.status_code == 415

@@ -57,11 +57,12 @@ function partRow(item, right) {
 
 const routes = [
   [/^#?\/?$/, renderHome],
-  [/^#\/project\/(\d+)(?:\/(capture|review|missing|inventory))?$/, renderProject],
+  [/^#\/project\/(\d+)(?:\/(capture|review|find|missing|inventory))?$/, renderProject],
 ];
 
 async function router() {
   const hash = location.hash || "#/";
+  window.scrollTo(0, 0);
   for (const [pattern, view] of routes) {
     const match = hash.match(pattern);
     if (match) {
@@ -76,6 +77,13 @@ async function router() {
   location.hash = "#/";
 }
 window.addEventListener("hashchange", router);
+
+// Re-render the current view after an action, keeping the scroll position.
+async function refresh() {
+  const y = window.scrollY;
+  await router();
+  window.scrollTo(0, y);
+}
 router();
 
 // ---------- home: projects ----------
@@ -195,6 +203,7 @@ async function renderProject(id, tab = "missing") {
   const tabs = [
     ["capture", "Capture"],
     ["review", `Review ${project.pending_reviews ? `<span class="badge">${project.pending_reviews}</span>` : ""}`],
+    ["find", "Find"],
     ["missing", `Missing (${project.parts_missing})`],
     ["inventory", "Inventory"],
   ];
@@ -206,8 +215,10 @@ async function renderProject(id, tab = "missing") {
       `<a href="#/project/${id}/${key}" class="${key === tab ? "active" : ""}">${label}</a>`).join("")}</nav>
     <section id="tab"></section>`;
   const section = document.getElementById("tab");
-  await { capture: renderCapture, review: renderReview, missing: renderMissing, inventory: renderInventory }[tab](
-    section, project);
+  const views = {
+    capture: renderCapture, review: renderReview, find: renderFind, missing: renderMissing, inventory: renderInventory,
+  };
+  await views[tab](section, project);
 }
 
 // Capture: the native camera via a file input works over plain HTTP.
@@ -242,7 +253,9 @@ function renderCapture(section, project) {
           toast(`Upload failed: ${error.message}`);
         }
       }
-      if (failed < files.length) location.hash = `#/project/${project.id}/review`;
+      // Loose bricks are looked for in the photo; build photos go straight to review.
+      const next = input.dataset.kind === "pile" ? "find" : "review";
+      if (failed < files.length) location.hash = `#/project/${project.id}/${next}`;
       else router();
     });
   });
@@ -263,51 +276,56 @@ async function renderReview(section, project) {
 
   section.querySelectorAll("form.review").forEach((form) => {
     const detection = detections.find((d) => String(d.id) === form.dataset.id);
-    const colorSelect = form.elements.color_id;
-    const otherSelect = form.elements.other_part;
+    bindReviewForm(form, detection, inventory, allColors);
+  });
+}
 
-    // Option values are "part_num|color_id": a candidate may match the set under a
-    // different (equivalent) part number, and that set part is what gets recorded.
-    const fillColors = () => {
-      const choice = form.elements.part.value;
-      const candidate = detection.candidates.find((c) => c.part_num === choice);
-      const partNum = choice === "__other" ? otherSelect.value : choice;
-      const setLines = candidate ? candidate.set_colors : inventory.filter((i) => i.part_num === partNum);
-      const setIds = new Set(setLines.map((c) => c.color_id));
-      const suggested = detection.suggestion && candidate?.set_colors.some((c) =>
-        c.part_num === detection.suggestion.part_num && c.color_id === detection.suggestion.color_id)
-        ? `${detection.suggestion.part_num}|${detection.suggestion.color_id}` : null;
-      colorSelect.innerHTML = `
-        ${setLines.length ? `<optgroup label="In this set">${setLines.map((c) => {
-          const value = `${c.part_num}|${c.color_id}`;
-          const label = `${c.color_name}${c.part_num !== partNum ? ` (as ${c.part_num})` : ""} – ${c.missing} missing`;
-          return `<option value="${esc(value)}" ${value === suggested ? "selected" : ""}>${esc(label)}</option>`;
-        }).join("")}</optgroup>` : ""}
-        <optgroup label="All colors">${allColors.filter((c) => !setIds.has(c.id)).map((c) =>
-          `<option value="${esc(`${partNum}|${c.id}`)}">${esc(c.name)}</option>`).join("")}</optgroup>`;
-      otherSelect.hidden = choice !== "__other";
-    };
-    form.querySelectorAll("input[name=part]").forEach((r) => r.addEventListener("change", fillColors));
-    otherSelect.addEventListener("change", fillColors);
-    fillColors();
+// Wires up a reviewCard() form: color choices per candidate, confirm and reject.
+function bindReviewForm(form, detection, inventory, allColors) {
+  const colorSelect = form.elements.color_id;
+  const otherSelect = form.elements.other_part;
 
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const [partNum, colorId] = colorSelect.value.split("|");
-      try {
-        await api(`/detections/${detection.id}/confirm`, {
-          method: "POST",
-          json: { part_num: partNum, color_id: Number(colorId), quantity: Number(form.elements.quantity.value) },
-        });
-        router();
-      } catch (error) {
-        toast(error.message);
-      }
-    });
-    form.querySelector("[data-action=reject]").addEventListener("click", async () => {
-      await api(`/detections/${detection.id}/reject`, { method: "POST" });
-      router();
-    });
+  // Option values are "part_num|color_id": a candidate may match the set under a
+  // different (equivalent) part number, and that set part is what gets recorded.
+  const fillColors = () => {
+    const choice = form.elements.part.value;
+    const candidate = detection.candidates.find((c) => c.part_num === choice);
+    const partNum = choice === "__other" ? otherSelect.value : choice;
+    const setLines = candidate ? candidate.set_colors : inventory.filter((i) => i.part_num === partNum);
+    const setIds = new Set(setLines.map((c) => c.color_id));
+    const suggested = detection.suggestion && candidate?.set_colors.some((c) =>
+      c.part_num === detection.suggestion.part_num && c.color_id === detection.suggestion.color_id)
+      ? `${detection.suggestion.part_num}|${detection.suggestion.color_id}` : null;
+    colorSelect.innerHTML = `
+      ${setLines.length ? `<optgroup label="In this set">${setLines.map((c) => {
+        const value = `${c.part_num}|${c.color_id}`;
+        const label = `${c.color_name}${c.part_num !== partNum ? ` (as ${c.part_num})` : ""} – ${c.missing} missing`;
+        return `<option value="${esc(value)}" ${value === suggested ? "selected" : ""}>${esc(label)}</option>`;
+      }).join("")}</optgroup>` : ""}
+      <optgroup label="All colors">${allColors.filter((c) => !setIds.has(c.id)).map((c) =>
+        `<option value="${esc(`${partNum}|${c.id}`)}">${esc(c.name)}</option>`).join("")}</optgroup>`;
+    otherSelect.hidden = choice !== "__other";
+  };
+  form.querySelectorAll("input[name=part]").forEach((r) => r.addEventListener("change", fillColors));
+  otherSelect.addEventListener("change", fillColors);
+  fillColors();
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const [partNum, colorId] = colorSelect.value.split("|");
+    try {
+      await api(`/detections/${detection.id}/confirm`, {
+        method: "POST",
+        json: { part_num: partNum, color_id: Number(colorId), quantity: Number(form.elements.quantity.value) },
+      });
+      refresh();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  form.querySelector("[data-action=reject]").addEventListener("click", async () => {
+    await api(`/detections/${detection.id}/reject`, { method: "POST" });
+    refresh();
   });
 }
 
@@ -352,6 +370,105 @@ function reviewCard(d, inventory) {
     </form>`;
 }
 
+// Find: pile photos with a box per brick; bricks the set still needs are highlighted.
+async function renderFind(section, project) {
+  const [photos, inventory, allColors] = await Promise.all([
+    api(`/projects/${project.id}/photos?kind=pile`),
+    api(`/projects/${project.id}/inventory`),
+    colors(),
+  ]);
+  if (!photos.length) {
+    section.innerHTML = `<div class="empty">No photos of loose bricks yet.
+      <a href="#/project/${project.id}/capture">Photograph a batch</a>.</div>`;
+    return;
+  }
+  section.innerHTML = `
+    <p class="muted"><span class="legend wanted"></span> part needed (check the color) ·
+      <span class="legend found"></span> found · <span class="legend other"></span> not needed or unsure.
+      Tap a box to check the brick.</p>
+    ${photos.map((photo) => `
+      <div class="card" data-photo="${photo.id}">
+        <div class="muted">${esc(photo.created_at)} · ${photo.detections.length} bricks ·
+          ${photo.wanted ? `<strong>${photo.wanted} needed</strong>` : "none needed"}</div>
+        <div class="photo-wrap"><img src="${esc(photo.url)}" alt="Loose bricks"><div class="boxes"></div></div>
+        <div class="selected-brick"></div>
+      </div>`).join("")}`;
+
+  for (const photo of photos) {
+    const card = section.querySelector(`[data-photo="${photo.id}"]`);
+    const img = card.querySelector("img");
+    const place = () => drawBoxes(card, photo, img, inventory, allColors);
+    if (img.complete && img.naturalWidth) place(); else img.addEventListener("load", place);
+  }
+}
+
+// Boxes are positioned in % of the photo, so they follow the image at any width.
+function drawBoxes(card, photo, img, inventory, allColors) {
+  const width = img.naturalWidth;
+  const height = img.naturalHeight;
+  const boxes = card.querySelector(".boxes");
+  boxes.innerHTML = photo.detections
+    .filter((d) => d.status !== "rejected")
+    .map((d) => {
+      const [x, y, w, h] = d.bbox ?? [0, 0, width, height];
+      const state = d.status === "confirmed" ? "found" : d.wanted ? "wanted" : "other";
+      const style = `left:${(100 * x) / width}%;top:${(100 * y) / height}%;`
+        + `width:${(100 * w) / width}%;height:${(100 * h) / height}%`;
+      return `<button class="box ${state}" style="${style}" data-detection="${d.id}"
+        aria-label="Brick ${d.id}">${state === "found" ? "✓" : ""}</button>`;
+    }).join("");
+  boxes.querySelectorAll(".box").forEach((box) => {
+    box.addEventListener("click", () => {
+      boxes.querySelectorAll(".box").forEach((b) => b.classList.toggle("selected", b === box));
+      const detection = photo.detections.find((d) => String(d.id) === box.dataset.detection);
+      showBrick(card.querySelector(".selected-brick"), detection, inventory, allColors);
+    });
+  });
+}
+
+// Brickognize does not report color, so "found" is one tap per color still missing.
+function showBrick(target, d, inventory, allColors) {
+  const top = d.candidates.find((c) => c.in_set) ?? d.candidates[0];
+  const suggested = top?.set_colors.find((c) =>
+    c.part_num === d.suggestion?.part_num && c.color_id === d.suggestion?.color_id);
+  const name = (suggested && inventory.find((i) => i.part_num === suggested.part_num)?.part_name) ?? top?.name;
+  const missingColors = (top?.set_colors ?? []).filter((c) => c.missing > 0)
+    .sort((a, b) => b.missing - a.missing);
+  target.innerHTML = `
+    <div class="part brick-summary">
+      <img src="${esc(d.crop_url)}" alt="">
+      <div class="info">
+        <div class="name">${esc(name ?? "Unknown brick")}</div>
+        <div class="muted">${d.status === "confirmed" ? `<span class="tag ok">recorded as found</span>`
+          : missingColors.length ? "Which color is it?" : top?.in_set ? "all of these are present"
+          : top ? "not in this set" : "not recognized"}</div>
+      </div>
+    </div>
+    ${d.status === "pending" && missingColors.length ? `<div class="row">${missingColors.map((c, i) => `
+      <button class="small color-choice" data-index="${i}">${swatch(c.color_rgb)}${esc(c.color_name)}
+        <span class="muted">${c.missing}×</span></button>`).join("")}</div>` : ""}
+    <div class="row"><button class="small" data-action="details">Other part or color…</button></div>
+    <div class="details"></div>`;
+  target.querySelectorAll(".color-choice").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const c = missingColors[Number(button.dataset.index)];
+      try {
+        await api(`/detections/${d.id}/confirm`, {
+          method: "POST", json: { part_num: c.part_num, color_id: c.color_id },
+        });
+        refresh();
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+  });
+  target.querySelector("[data-action=details]").addEventListener("click", () => {
+    const details = target.querySelector(".details");
+    details.innerHTML = reviewCard(d, inventory);
+    bindReviewForm(details.querySelector("form"), d, inventory, allColors);
+  });
+}
+
 async function renderMissing(section, project) {
   const missing = await api(`/projects/${project.id}/missing`);
   if (!missing.length) {
@@ -374,7 +491,7 @@ async function renderMissing(section, project) {
       await api(`/projects/${project.id}/parts`, {
         method: "POST", json: { part_num: m.part_num, color_id: m.color_id, quantity: 1, source: "found" },
       });
-      router();
+      refresh();
     });
   });
   document.getElementById("export").addEventListener("click", () => {
@@ -416,13 +533,13 @@ async function renderInventory(section, project) {
       await api(`/projects/${project.id}/parts`, {
         method: "POST", json: { part_num: item.part_num, color_id: item.color_id, quantity: 1, source: "build" },
       });
-      router();
+      refresh();
     });
   });
   section.querySelectorAll("button[data-undo]").forEach((button) => {
     button.addEventListener("click", async () => {
       await api(`/projects/${project.id}/parts/${button.dataset.undo}`, { method: "DELETE" });
-      router();
+      refresh();
     });
   });
 }

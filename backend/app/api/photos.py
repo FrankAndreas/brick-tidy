@@ -48,10 +48,12 @@ def serialize_detection(
     alternate, print), so a BrickLink ID still finds the Rebrickable part of the
     set. The suggestion is the best-scoring candidate that matches the set, in the
     color with the most bricks still missing; the user confirms or corrects it.
+    A detection is "wanted" when its suggested part is still missing in some color.
     """
     colors = lookup_colors(conn)
     candidates = []
     suggestion = None
+    wanted = False
     for cand in json.loads(detection["candidates"]):
         set_colors = [
             {
@@ -67,8 +69,12 @@ def serialize_detection(
         ]
         candidates.append({**cand, "in_set": bool(set_colors), "set_colors": set_colors})
         if suggestion is None and set_colors:
-            best = max(set_colors, key=lambda c: (c["part_num"] == cand["part_num"], c["missing"]))
+            best = max(
+                set_colors,
+                key=lambda c: (c["missing"] > 0, c["part_num"] == cand["part_num"], c["missing"]),
+            )
             suggestion = {"part_num": best["part_num"], "color_id": best["color_id"]}
+            wanted = best["missing"] > 0
 
     confirmed = conn.execute(
         "SELECT part_num, color_id, quantity FROM project_parts WHERE detection_id = ?",
@@ -86,6 +92,7 @@ def serialize_detection(
         or candidates[0]["score"] < settings.confidence_threshold,
         "candidates": candidates,
         "suggestion": suggestion,
+        "wanted": wanted,
         "confirmed": dict(confirmed) if confirmed else None,
     }
 
@@ -184,6 +191,39 @@ def list_detections(
     # Newest photo first; its crops in reading order.
     rows = conn.execute(sql + " ORDER BY d.photo_id DESC, d.id", params).fetchall()
     return [serialize_detection(conn, settings, d, grouped) for d in rows]
+
+
+@router.get("/projects/{project_id}/photos")
+def list_photos(
+    project_id: int,
+    kind: Literal["build", "pile"] | None = None,
+    conn: sqlite3.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Photos, newest first, each with its detections for drawing boxes on the photo."""
+    project = get_project_or_404(conn, project_id)
+    sql = "SELECT * FROM photos WHERE project_id = ?"
+    params: list = [project_id]
+    if kind:
+        sql += " AND kind = ?"
+        params.append(kind)
+    photos = conn.execute(sql + " ORDER BY id DESC", params).fetchall()
+    grouped = status_by_part(conn, project)
+    result = []
+    for photo in photos:
+        rows = conn.execute(DETECTION_SELECT + " WHERE d.photo_id = ? ORDER BY d.id", (photo["id"],))
+        detections = [serialize_detection(conn, settings, d, grouped) for d in rows]
+        result.append(
+            {
+                "id": photo["id"],
+                "kind": photo["kind"],
+                "url": media_url(photo["path"]),
+                "created_at": photo["created_at"],
+                "detections": detections,
+                "wanted": sum(d["wanted"] and d["status"] == "pending" for d in detections),
+            }
+        )
+    return result
 
 
 def get_detection_or_404(conn: sqlite3.Connection, detection_id: int) -> sqlite3.Row:
