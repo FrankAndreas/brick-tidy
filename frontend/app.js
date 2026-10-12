@@ -168,8 +168,9 @@ function renderCapture(section, project) {
       <label class="button">🖼 Build from gallery<input type="file" accept="image/*" multiple data-kind="build"></label>
       <label class="button">🖼 Bricks from gallery<input type="file" accept="image/*" multiple data-kind="pile"></label>
     </div>
-    <p class="muted">For now, photograph <strong>one brick per photo</strong> on a plain background.
-      Each photo is recognized and then appears under <em>Review</em>.</p>
+    <p class="muted">Spread a <strong>small batch of bricks</strong> on a plain surface so they do not
+      touch, and photograph them from above. Each brick is cropped, recognized and then appears under
+      <em>Review</em>. A close-up of a single brick works too.</p>
     <p id="upload-status" class="muted"></p>`;
 
   section.querySelectorAll("input[type=file]").forEach((input) => {
@@ -179,7 +180,7 @@ function renderCapture(section, project) {
       section.querySelectorAll("input").forEach((i) => { i.disabled = true; });
       let failed = 0;
       for (const [index, file] of files.entries()) {
-        status.textContent = `Recognizing photo ${index + 1} of ${files.length}…`;
+        status.textContent = `Finding and recognizing bricks in photo ${index + 1} of ${files.length}…`;
         const body = new FormData();
         body.append("file", file);
         body.append("kind", input.dataset.kind);

@@ -1,6 +1,10 @@
 import io
+import tempfile
+from pathlib import Path
 
 import pytest
+
+from tests.images import BLUE, RED, YELLOW, make_photo
 
 
 @pytest.fixture
@@ -10,12 +14,19 @@ def project(client) -> dict:
     return response.json()
 
 
-def upload(client, project_id: int, kind: str = "build"):
+def upload(client, project_id: int, kind: str = "build", image: bytes | None = None):
+    if image is None:
+        image = make_photo_bytes([(40, 40, 1500, 1100, RED)])
     return client.post(
         f"/api/projects/{project_id}/photos",
-        files={"file": ("brick.jpg", io.BytesIO(b"fake-jpeg"), "image/jpeg")},
+        files={"file": ("brick.jpg", io.BytesIO(image), "image/jpeg")},
         data={"kind": kind},
     )
+
+
+def make_photo_bytes(bricks) -> bytes:
+    with tempfile.TemporaryDirectory() as tmp:
+        return make_photo(Path(tmp) / "photo.jpg", bricks).read_bytes()
 
 
 def missing_map(client, project_id: int) -> dict:
@@ -79,10 +90,11 @@ def test_extra_parts_do_not_go_negative(client, project):
 
 
 def test_upload_recognizes_and_suggests_in_set_candidate(client, project, settings):
-    response = upload(client, project["id"])
+    image = make_photo_bytes([(40, 40, 1500, 1100, RED)])
+    response = upload(client, project["id"], image=image)
     assert response.status_code == 201
     photo = response.json()
-    assert (settings.data_dir / photo["url"].removeprefix("/media/")).read_bytes() == b"fake-jpeg"
+    assert (settings.data_dir / photo["url"].removeprefix("/media/")).read_bytes() == image
 
     [detection] = photo["detections"]
     assert detection["status"] == "pending"
@@ -96,7 +108,34 @@ def test_upload_recognizes_and_suggests_in_set_candidate(client, project, settin
     }
     # Red has the most bricks missing.
     assert detection["suggestion"] == {"part_num": "3001", "color_id": 4}
-    assert client.get(detection["crop_url"]).content == b"fake-jpeg"
+    assert detection["bbox"] is None  # close-up: the whole photo is the crop
+    assert client.get(detection["crop_url"]).content == image
+
+
+def test_upload_with_several_bricks_creates_one_detection_per_crop(client, project, settings):
+    image = make_photo_bytes(
+        [(100, 100, 240, 120, RED), (800, 150, 120, 120, BLUE), (400, 800, 360, 120, YELLOW)]
+    )
+    photo = upload(client, project["id"], kind="pile", image=image).json()
+    detections = photo["detections"]
+    assert len(detections) == 3
+    assert all(len(d["bbox"]) == 4 for d in detections)
+    assert len({d["crop_url"] for d in detections}) == 3
+    for d in detections:
+        assert d["crop_url"].startswith(f"/media/crops/{project['id']}/")
+        assert client.get(d["crop_url"]).status_code == 200
+
+    # Newest photo first, crops in reading order.
+    later = upload(client, project["id"]).json()["detections"][0]
+    listed = client.get(f"/api/projects/{project['id']}/detections").json()
+    assert [d["id"] for d in listed] == [later["id"]] + [d["id"] for d in detections]
+
+
+def test_rejects_unreadable_image(client, project, settings):
+    response = upload(client, project["id"], image=b"not really a jpeg")
+    assert response.status_code == 415
+    assert not any((settings.photos_dir / str(project["id"])).iterdir())
+    assert client.get(f"/api/projects/{project['id']}/detections").json() == []
 
 
 def test_bricklink_id_is_mapped_to_set_part_via_mold_relationship(client, project, brickognize):

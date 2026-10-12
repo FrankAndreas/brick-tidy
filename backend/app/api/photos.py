@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
 
@@ -17,6 +18,7 @@ from app.services.recognizer import BrickognizeRecognizer, RecognitionError
 router = APIRouter(prefix="/api", tags=["photos"])
 
 ALLOWED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+RECOGNITION_WORKERS = 4
 
 
 class DetectionConfirm(BaseModel):
@@ -119,30 +121,41 @@ def upload_photo(
     photo_path = photo_dir / f"{uuid.uuid4().hex}{suffix}"
     photo_path.write_bytes(file.file.read())
 
+    try:
+        crops = detector.detect(photo_path, settings.crops_dir / str(project_id))
+    except ValueError as exc:
+        photo_path.unlink()
+        raise HTTPException(415, str(exc)) from exc
+
+    def recognize(crop: detector.Crop) -> tuple[list[dict], str | None]:
+        try:
+            return [c.to_dict() for c in recognizer.recognize(crop.path)], None
+        except RecognitionError as exc:
+            return [], str(exc)
+
+    # Brickognize takes about a second per crop; a few requests in parallel.
+    with ThreadPoolExecutor(max_workers=RECOGNITION_WORKERS) as pool:
+        results = list(pool.map(recognize, crops))
+
     with conn:
         photo_id = conn.execute(
             "INSERT INTO photos (project_id, kind, path) VALUES (?, ?, ?)",
             (project_id, kind, relative(settings, photo_path)),
         ).lastrowid
-
-    for crop in detector.detect(photo_path, settings.crops_dir / str(project_id)):
-        candidates, error = [], None
-        try:
-            candidates = [c.to_dict() for c in recognizer.recognize(crop.path)]
-        except RecognitionError as exc:
-            error = str(exc)
-        with conn:
-            conn.execute(
-                "INSERT INTO detections (photo_id, crop_path, bbox, candidates, error)"
-                " VALUES (?, ?, ?, ?, ?)",
+        conn.executemany(
+            "INSERT INTO detections (photo_id, crop_path, bbox, candidates, error)"
+            " VALUES (?, ?, ?, ?, ?)",
+            [
                 (
                     photo_id,
                     relative(settings, crop.path),
                     json.dumps(crop.bbox) if crop.bbox else None,
                     json.dumps(candidates),
                     error,
-                ),
-            )
+                )
+                for crop, (candidates, error) in zip(crops, results)
+            ],
+        )
 
     grouped = status_by_part(conn, project)
     detections = conn.execute(DETECTION_SELECT + " WHERE d.photo_id = ?", (photo_id,))
@@ -168,7 +181,8 @@ def list_detections(
         sql += " AND d.status = ?"
         params.append(status)
     grouped = status_by_part(conn, project)
-    rows = conn.execute(sql + " ORDER BY d.id DESC", params).fetchall()
+    # Newest photo first; its crops in reading order.
+    rows = conn.execute(sql + " ORDER BY d.photo_id DESC, d.id", params).fetchall()
     return [serialize_detection(conn, settings, d, grouped) for d in rows]
 
 

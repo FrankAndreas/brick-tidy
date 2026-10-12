@@ -20,11 +20,12 @@ cd backend && .venv/bin/uvicorn app.main:create_app --factory --reload --host 0.
 Copy `.env.example` to `.env` to change settings. The catalog import can be re-run at any time to
 refresh the Rebrickable data; projects are kept.
 
-**Status:** roadmap step 1 (MVP) is implemented. You can create a project from a set number, take one
-brick per photo, have it recognized by Brickognize, confirm or correct it, list parts by hand, view the
-missing list and export it as CSV. Brickognize returns BrickLink part IDs. These are mapped to the
-set's Rebrickable part numbers via Rebrickable's mold, alternate and print relationships
-(e.g. 61678 → 11153). `services/detector.py` still treats each photo as a single brick (step 2).
+**Status:** roadmap steps 1 (MVP) and 2 (detection) are implemented. Create a project from a set
+number, photograph a small batch of bricks spread out on a plain surface, and each brick is cropped
+(OpenCV), recognized by Brickognize, and offered for review. You can confirm or correct each brick,
+list parts by hand, view the missing list and export it as CSV. Brickognize returns BrickLink part IDs.
+These are mapped to the set's Rebrickable part numbers via Rebrickable's mold, alternate and print
+relationships (e.g. 61678 → 11153).
 
 ## Goals
 
