@@ -20,12 +20,20 @@ cd backend && .venv/bin/uvicorn app.main:create_app --factory --reload --host 0.
 Copy `.env.example` to `.env` to change settings. The catalog import can be re-run at any time to
 refresh the Rebrickable data; projects are kept.
 
-**Status:** roadmap steps 1 (MVP) and 2 (detection) are implemented. Create a project from a set
-number, photograph a small batch of bricks spread out on a plain surface, and each brick is cropped
-(OpenCV), recognized by Brickognize, and offered for review. You can confirm or correct each brick,
-list parts by hand, view the missing list and export it as CSV. Brickognize returns BrickLink part IDs.
-These are mapped to the set's Rebrickable part numbers via Rebrickable's mold, alternate and print
-relationships (e.g. 61678 → 11153).
+**Status:** roadmap steps 1–3 are implemented:
+
+- **Set identification:** start a project by typing the set number, or by photographing the box,
+  instructions or partial build. Brickognize suggests sets; when it is unsure, fails or finds nothing,
+  Claude is asked too (only if `ANTHROPIC_API_KEY` is set). You pick the set from the suggestions.
+- **Detection and recognition:** photograph a small batch of bricks spread out on a plain surface;
+  each brick is cropped (OpenCV), recognized by Brickognize, and offered for review.
+- **Review and missing list:** confirm or correct each brick, list parts by hand, view the missing
+  list and export it as CSV. Brickognize returns BrickLink part IDs. These are mapped to the set's
+  Rebrickable part numbers via Rebrickable's mold, alternate and print relationships
+  (e.g. 61678 → 11153).
+
+Brickognize's keyless endpoints are marked "legacy" in its API; it also offers a paid API with
+credits. If the free endpoints become unavailable, brick recognition falls back to manual review.
 
 ## Goals
 
@@ -88,8 +96,10 @@ sorting hardware, multi-user accounts.
   detected parts), *Missing list*, *Find bricks* (highlight matches in a pile photo).
 - Uses the native camera through the file input; no HTTPS required for this.
 
-### 2. Set Identifier (LLM, vision)
+### 2. Set Identifier (Brickognize, LLM fallback)
 - Input: photo(s) of the partial build, the box, stickers, or loose pieces.
+- Primary: Brickognize set recognition (free, no key). Fallback: a vision LLM (Claude) when
+  Brickognize is unsure or unavailable.
 - Output: up to 3–5 candidate sets with confidence and any set number read from the image.
 - The user confirms the set; this keeps the weakest step cheap and safe.
 - Alternative path: user types the set number directly.
@@ -191,11 +201,15 @@ Environment variables (example):
 
 ```
 BRICKOGNIZE_URL=https://api.brickognize.com/predict/
+BRICKOGNIZE_SETS_URL=https://api.brickognize.com/predict/sets/
 REBRICKABLE_API_KEY=...        # optional, CSV import works without it
-LLM_API_KEY=...                # for set identification / fallback
+ANTHROPIC_API_KEY=...          # optional, Claude as set identification fallback
+CLAUDE_MODEL=claude-opus-5-5
 CONFIDENCE_THRESHOLD=0.5
 DATA_DIR=./data
 ```
+
+See `.env.example`.
 
 ## Known limitations
 

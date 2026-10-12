@@ -6,6 +6,7 @@ from fastapi import HTTPException, Request
 from app.config import Settings
 from app.db import connect
 from app.services.recognizer import BrickognizeRecognizer
+from app.services.set_identifier import SetIdentifier
 
 
 def get_settings(request: Request) -> Settings:
@@ -22,6 +23,10 @@ def get_db(request: Request) -> Iterator[sqlite3.Connection]:
 
 def get_recognizer(request: Request) -> BrickognizeRecognizer:
     return request.app.state.recognizer
+
+
+def get_set_identifier(request: Request) -> SetIdentifier:
+    return request.app.state.set_identifier
 
 
 def get_project_or_404(conn: sqlite3.Connection, project_id: int) -> sqlite3.Row:

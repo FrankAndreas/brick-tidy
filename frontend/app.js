@@ -93,6 +93,14 @@ async function renderHome() {
       <datalist id="set-options"></datalist>
       <button class="primary" type="submit">Start project</button>
     </form>
+    <div class="card">
+      <div class="row">
+        <label class="button">📷 Identify set from photo<input type="file" accept="image/*" capture="environment" data-identify hidden></label>
+        <label class="button">🖼 From gallery<input type="file" accept="image/*" multiple data-identify hidden></label>
+      </div>
+      <p class="muted">Photograph the box, the instructions or the partly built model (up to 3 photos).</p>
+      <div id="identify-result"></div>
+    </div>
     ${projects.length ? projects.map(projectCard).join("") : `<div class="empty">No projects yet.</div>`}`;
 
   const form = document.getElementById("new-project");
@@ -106,12 +114,55 @@ async function renderHome() {
   }, 250));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    try {
-      const project = await api("/projects", { method: "POST", json: { set_num: input.value } });
-      location.hash = `#/project/${project.id}/capture`;
-    } catch (error) {
-      toast(error.message);
-    }
+    await startProject(input.value);
+  });
+
+  document.querySelectorAll("input[data-identify]").forEach((fileInput) => {
+    fileInput.addEventListener("change", () => identifySet([...fileInput.files].slice(0, 3)));
+  });
+}
+
+async function startProject(setNum) {
+  try {
+    const project = await api("/projects", { method: "POST", json: { set_num: setNum } });
+    location.hash = `#/project/${project.id}/capture`;
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function identifySet(files) {
+  if (!files.length) return;
+  const target = document.getElementById("identify-result");
+  target.innerHTML = `<p class="muted">Looking for the set…</p>`;
+  const body = new FormData();
+  files.forEach((file) => body.append("files", file));
+  let result;
+  try {
+    result = await api("/sets/identify", { method: "POST", body });
+  } catch (error) {
+    target.innerHTML = `<p class="muted">Identification failed: ${esc(error.message)}</p>`;
+    return;
+  }
+  const notes = result.errors.map((e) => `<p class="muted">⚠ ${esc(e)}</p>`).join("");
+  if (!result.candidates.length) {
+    target.innerHTML = `${notes}<p class="muted">No set recognized. Try a photo of the box or the
+      instruction cover, or type the set number above.</p>`;
+    return;
+  }
+  target.innerHTML = `${notes}<h2>Is it one of these?</h2>${result.candidates.map((c) => `
+    <div class="card part">
+      ${partImage(c.img_url)}
+      <div class="info">
+        <div class="name">${esc(c.name)}</div>
+        <div class="muted">${esc(c.set_num)} · ${esc(c.year)} · ${esc(c.num_parts)} parts ·
+          ${Math.round(c.score * 100)}% <span class="tag">${c.sources.map(esc).join(" + ")}</span></div>
+        ${c.evidence ? `<div class="muted">${esc(c.evidence)}</div>` : ""}
+      </div>
+      <button class="small primary" data-set="${esc(c.set_num)}">Start</button>
+    </div>`).join("")}`;
+  target.querySelectorAll("button[data-set]").forEach((button) => {
+    button.addEventListener("click", () => startProject(button.dataset.set));
   });
 }
 

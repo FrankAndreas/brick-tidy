@@ -38,7 +38,7 @@ class BrickognizeRecognizer:
             with open(image_path, "rb") as fh:
                 response = self.client.post(
                     self.url,
-                    files={"query_image": (image_path.name, fh, _content_type(image_path))},
+                    files={"query_image": (image_path.name, fh, content_type(image_path))},
                 )
             response.raise_for_status()
             payload = response.json()
@@ -60,7 +60,7 @@ class BrickognizeRecognizer:
         ]
 
 
-def _content_type(path: Path) -> str:
+def content_type(path: Path) -> str:
     return {
         ".png": "image/png",
         ".webp": "image/webp",

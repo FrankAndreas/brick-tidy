@@ -49,6 +49,26 @@ def test_status_and_set_search(client):
     ]
 
 
+def test_identify_set_from_photos(client):
+    photo = make_photo_bytes([(400, 400, 300, 150, RED)])
+    response = client.post(
+        "/api/sets/identify",
+        files=[("files", ("a.jpg", photo, "image/jpeg")), ("files", ("b.jpg", photo, "image/jpeg"))],
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert [(c["set_num"], c["name"], c["sources"]) for c in body["candidates"]] == [
+        ("1234-1", "Test House", ["brickognize"])
+    ]
+    assert body["sources"] == ["brickognize"] and body["errors"] == []
+
+
+def test_identify_set_limits_photo_count(client):
+    photo = make_photo_bytes([])
+    files = [("files", (f"{i}.jpg", photo, "image/jpeg")) for i in range(4)]
+    assert client.post("/api/sets/identify", files=files).status_code == 422
+
+
 def test_create_project_defaults_name_and_counts(project):
     assert project["set_num"] == "1234-1"
     assert project["name"] == "Test House"

@@ -9,6 +9,7 @@ from app.db import connect, init_db
 from app.main import create_app
 from app.services.inventory import import_directory
 from app.services.recognizer import BrickognizeRecognizer
+from app.services.set_identifier import BrickognizeSetIdentifier, SetIdentifier
 
 FIXTURES = Path(__file__).parent / "fixtures"
 BRICKOGNIZE_URL = "https://brickognize.test/predict/"
@@ -55,5 +56,20 @@ def recognizer(brickognize) -> BrickognizeRecognizer:
 
 
 @pytest.fixture
-def client(settings, db, recognizer) -> TestClient:
-    return TestClient(create_app(settings, recognizer=recognizer))
+def brickognize_sets() -> list[dict]:
+    """Items the fake Brickognize set endpoint returns; tests may mutate it."""
+    return [{"id": "1234-1", "name": "Test House", "type": "set", "score": 0.7}]
+
+
+@pytest.fixture
+def set_identifier(brickognize_sets) -> SetIdentifier:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"items": brickognize_sets})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    return SetIdentifier(BrickognizeSetIdentifier(BRICKOGNIZE_URL, client=client), None, 0.5)
+
+
+@pytest.fixture
+def client(settings, db, recognizer, set_identifier) -> TestClient:
+    return TestClient(create_app(settings, recognizer=recognizer, set_identifier=set_identifier))
