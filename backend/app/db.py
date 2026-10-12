@@ -52,6 +52,12 @@ CREATE TABLE IF NOT EXISTS part_relationships (
 CREATE INDEX IF NOT EXISTS ix_part_rel_child ON part_relationships(child_part_num);
 CREATE INDEX IF NOT EXISTS ix_part_rel_parent ON part_relationships(parent_part_num);
 
+-- Rebrickable API answers: BrickLink part ID -> Rebrickable part numbers (JSON list).
+CREATE TABLE IF NOT EXISTS bricklink_parts (
+    bricklink_id TEXT PRIMARY KEY,
+    part_nums    TEXT NOT NULL
+);
+
 -- App state
 CREATE TABLE IF NOT EXISTS projects (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +80,7 @@ CREATE TABLE IF NOT EXISTS detections (
     bbox       TEXT,
     candidates TEXT NOT NULL DEFAULT '[]',
     error      TEXT,
+    color      TEXT,  -- measured brick color, "RRGGBB"
     status     TEXT NOT NULL DEFAULT 'pending'
                CHECK (status IN ('pending', 'confirmed', 'rejected')),
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -100,7 +107,15 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+# Columns added after the first release: (table, column, definition).
+MIGRATIONS = [("detections", "color", "TEXT")]
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        for table, column, definition in MIGRATIONS:
+            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in columns:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")

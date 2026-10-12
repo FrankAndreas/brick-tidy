@@ -2,3 +2,6 @@ part_num,name,part_cat_id,part_material
 3001,Brick 2 x 4,11,Plastic
 3003,Brick 2 x 2,11,Plastic
 973c01,Torso Plain,60,Plastic
+4032a,Plate Round 2 x 2 with Axle Hole Type 1,21,Plastic
+4032b,Plate Round 2 x 2 with Axle Hole Type 2,21,Plastic
+98138,Tile Round 1 x 1,67,Plastic

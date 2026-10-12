@@ -8,6 +8,7 @@ from app.config import Settings
 from app.db import connect, init_db
 from app.main import create_app
 from app.services.inventory import import_directory
+from app.services.rebrickable import RebrickableClient
 from app.services.recognizer import BrickognizeRecognizer
 from app.services.set_identifier import BrickognizeSetIdentifier, SetIdentifier
 
@@ -71,5 +72,23 @@ def set_identifier(brickognize_sets) -> SetIdentifier:
 
 
 @pytest.fixture
-def client(settings, db, recognizer, set_identifier) -> TestClient:
-    return TestClient(create_app(settings, recognizer=recognizer, set_identifier=set_identifier))
+def rebrickable_parts() -> dict[str, list[str]]:
+    """BrickLink ID -> Rebrickable part numbers the fake Rebrickable API knows."""
+    return {}
+
+
+@pytest.fixture
+def rebrickable(rebrickable_parts) -> RebrickableClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        part_nums = rebrickable_parts.get(request.url.params["bricklink_id"], [])
+        return httpx.Response(200, json={"results": [{"part_num": p} for p in part_nums]})
+
+    return RebrickableClient("key", httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+@pytest.fixture
+def client(settings, db, recognizer, set_identifier, rebrickable) -> TestClient:
+    app = create_app(
+        settings, recognizer=recognizer, set_identifier=set_identifier, rebrickable=rebrickable
+    )
+    return TestClient(app)

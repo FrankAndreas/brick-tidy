@@ -151,18 +151,24 @@ def test_upload_with_several_bricks_creates_one_detection_per_crop(client, proje
     assert [d["id"] for d in listed] == [later["id"]] + [d["id"] for d in detections]
 
 
+LIGHT_BLUISH_GRAY = (169, 165, 160)  # BGR of Rebrickable color 71
+
+
 def test_pile_photos_mark_wanted_bricks(client, project, brickognize):
     pid = project["id"]
+    # Brickognize says 2x4 brick (3001) for every crop; the set has it in red and gray.
     image = make_photo_bytes([(100, 100, 240, 120, RED), (800, 150, 120, 120, BLUE)])
     upload(client, pid, kind="pile", image=image)
     upload(client, pid, kind="build")
 
     [photo] = client.get(f"/api/projects/{pid}/photos", params={"kind": "pile"}).json()
     assert photo["kind"] == "pile" and photo["url"].startswith(f"/media/photos/{pid}/")
-    assert [d["wanted"] for d in photo["detections"]] == [True, True]  # 3001 is missing
-    assert photo["wanted"] == 2
+    red, blue = photo["detections"]
+    assert red["wanted"] is True
+    assert blue["wanted"] is False  # no blue 2x4 in the set
+    assert photo["wanted"] == 1
 
-    # Once every 2x4 brick is present, new pile photos no longer want it.
+    # Once every 2x4 brick is present, the red one is no longer wanted either.
     client.post(f"/api/projects/{pid}/parts", json={"part_num": "3001", "color_id": 4, "quantity": 4})
     client.post(f"/api/projects/{pid}/parts", json={"part_num": "3001", "color_id": 71})
     photo = client.get(f"/api/projects/{pid}/photos", params={"kind": "pile"}).json()[0]
@@ -171,11 +177,34 @@ def test_pile_photos_mark_wanted_bricks(client, project, brickognize):
     assert len(client.get(f"/api/projects/{pid}/photos").json()) == 2
 
 
-def test_suggestion_prefers_a_color_that_is_still_missing(client, project):
+def test_suggestion_follows_measured_color(client, project):
     pid = project["id"]
-    # Red 2x4: 4 needed, 4 present; light bluish gray: 1 needed, 0 present.
+    gray = upload(client, pid, kind="pile", image=make_photo_bytes([(400, 400, 300, 150, LIGHT_BLUISH_GRAY)]))
+    red = upload(client, pid, kind="pile", image=make_photo_bytes([(400, 400, 300, 150, RED)]))
+    for response, color_id in ((gray, 71), (red, 4)):
+        detection = response.json()["detections"][0]
+        assert detection["color"] is not None
+        assert detection["suggestion"] == {"part_num": "3001", "color_id": color_id}
+        set_colors = detection["candidates"][0]["set_colors"]
+        assert set_colors[0]["color_id"] == color_id  # closest color first
+        assert set_colors[0]["distance"] < set_colors[1]["distance"]
+
+
+def test_red_brick_is_not_wanted_once_all_red_ones_are_present(client, project):
+    pid = project["id"]
     client.post(f"/api/projects/{pid}/parts", json={"part_num": "3001", "color_id": 4, "quantity": 4})
-    detection = upload(client, pid, kind="pile").json()["detections"][0]
+    red = upload(client, pid, kind="pile", image=make_photo_bytes([(400, 400, 300, 150, RED)]))
+    detection = red.json()["detections"][0]
+    assert detection["suggestion"]["color_id"] == 4  # it still looks red
+    assert detection["wanted"] is False  # the missing gray one does not match
+
+
+def test_without_color_the_suggestion_prefers_a_missing_color(client, project):
+    pid = project["id"]
+    client.post(f"/api/projects/{pid}/parts", json={"part_num": "3001", "color_id": 4, "quantity": 4})
+    # A plain photo: no brick to measure, recognized as a whole.
+    detection = upload(client, pid, kind="pile", image=make_photo_bytes([])).json()["detections"][0]
+    assert detection["color"] is None
     assert detection["suggestion"] == {"part_num": "3001", "color_id": 71}
     assert detection["wanted"] is True
 
@@ -192,6 +221,14 @@ def test_bricklink_id_is_mapped_to_set_part_via_mold_relationship(client, projec
     [candidate] = upload(client, project["id"]).json()["detections"][0]["candidates"]
     assert candidate["in_set"] is True
     assert [(c["part_num"], c["color_name"]) for c in candidate["set_colors"]] == [("3003", "Black")]
+
+
+def test_unknown_bricklink_id_is_resolved_via_rebrickable(client, project, brickognize, rebrickable_parts):
+    rebrickable_parts["3003old"] = ["3003"]
+    brickognize["items"] = [{"id": "3003old", "name": "Brick 2 x 2", "score": 0.8}]
+    detection = upload(client, project["id"]).json()["detections"][0]
+    assert detection["candidates"][0]["aliases"] == ["3003"]
+    assert detection["candidates"][0]["in_set"] is True
 
 
 def test_suggestion_maps_to_printed_set_part(client, project, brickognize):

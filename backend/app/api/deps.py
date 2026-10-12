@@ -5,7 +5,8 @@ from fastapi import HTTPException, Request
 
 from app.config import Settings
 from app.db import connect
-from app.services.recognizer import BrickognizeRecognizer
+from app.services.rebrickable import RebrickableClient
+from app.services.recognizer import BrickognizeRecognizer, ClaudePartRecognizer
 from app.services.set_identifier import SetIdentifier
 
 
@@ -23,6 +24,14 @@ def get_db(request: Request) -> Iterator[sqlite3.Connection]:
 
 def get_recognizer(request: Request) -> BrickognizeRecognizer:
     return request.app.state.recognizer
+
+
+def get_part_fallback(request: Request) -> ClaudePartRecognizer | None:
+    return request.app.state.part_fallback
+
+
+def get_rebrickable(request: Request) -> RebrickableClient | None:
+    return request.app.state.rebrickable
 
 
 def get_set_identifier(request: Request) -> SetIdentifier:

@@ -8,12 +8,21 @@ from typing import Literal
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_db, get_project_or_404, get_recognizer, get_settings
-from app.api.projects import lookup_colors
+from app.api.deps import (
+    get_db,
+    get_part_fallback,
+    get_project_or_404,
+    get_rebrickable,
+    get_recognizer,
+    get_settings,
+)
+from app.api.projects import lookup_colors, lookup_part_names
 from app.config import Settings
 from app.services import detector, matcher
-from app.services.inventory import equivalent_parts
-from app.services.recognizer import BrickognizeRecognizer, RecognitionError
+from app.services.colors import MATCH_DISTANCE, color_distance, measure_color
+from app.services.inventory import catalog_aliases, equivalent_parts
+from app.services.rebrickable import RebrickableClient
+from app.services.recognizer import BrickognizeRecognizer, ClaudePartRecognizer, RecognitionError
 
 router = APIRouter(prefix="/api", tags=["photos"])
 
@@ -44,37 +53,64 @@ def serialize_detection(
 ) -> dict:
     """Detection plus, per candidate, the set's inventory lines it may match.
 
-    A candidate matches its own part number or an equivalent one (mold variant,
-    alternate, print), so a BrickLink ID still finds the Rebrickable part of the
-    set. The suggestion is the best-scoring candidate that matches the set, in the
-    color with the most bricks still missing; the user confirms or corrects it.
-    A detection is "wanted" when its suggested part is still missing in some color.
+    A candidate matches its Rebrickable aliases (resolved at upload) or an
+    equivalent part (mold variant, alternate, print), so a BrickLink ID still
+    finds the Rebrickable part of the set. When the brick's color was measured, each line gets a color distance and
+    lines are ordered by it. The suggestion is the best-scoring candidate in the
+    set, in the closest color (without a measurement: the color with the most
+    bricks missing). A detection is "wanted" when that part is still missing in a
+    color that matches the photo (any color without a measurement).
     """
     colors = lookup_colors(conn)
+    measured = detection["color"]
     candidates = []
     suggestion = None
     wanted = False
     for cand in json.loads(detection["candidates"]):
-        set_colors = [
-            {
-                "part_num": item.part_num,
-                "color_id": item.color_id,
-                "color_name": colors[item.color_id]["name"] if item.color_id in colors else "",
-                "color_rgb": colors[item.color_id]["rgb"] if item.color_id in colors else None,
-                "needed": item.needed,
-                "missing": item.missing,
-            }
-            for part_num in equivalent_parts(conn, cand["part_num"])
-            for item in status_by_part.get(part_num, [])
-        ]
+        # Candidates stored before aliases existed use their own ID.
+        exact = cand.get("aliases") or [cand["part_num"]]
+        part_nums = list(dict.fromkeys(p for a in exact for p in equivalent_parts(conn, a)))
+        set_colors = []
+        for part_num in part_nums:
+            for item in status_by_part.get(part_num, []):
+                color = colors.get(item.color_id)
+                rgb = color["rgb"] if color else None
+                set_colors.append(
+                    {
+                        "part_num": item.part_num,
+                        "color_id": item.color_id,
+                        "color_name": color["name"] if color else "",
+                        "color_rgb": rgb,
+                        "needed": item.needed,
+                        "missing": item.missing,
+                        "distance": round(color_distance(measured, rgb), 1)
+                        if measured and rgb
+                        else None,
+                    }
+                )
+                distance = set_colors[-1]["distance"]
+                set_colors[-1]["matches_photo"] = distance is not None and distance <= MATCH_DISTANCE
+        if measured:
+            # Matching colors first; among them the recognized part before equivalents.
+            set_colors.sort(
+                key=lambda c: (
+                    not c["matches_photo"],
+                    c["part_num"] not in exact,
+                    c["distance"] if c["distance"] is not None else 1e9,
+                )
+            )
         candidates.append({**cand, "in_set": bool(set_colors), "set_colors": set_colors})
         if suggestion is None and set_colors:
-            best = max(
-                set_colors,
-                key=lambda c: (c["missing"] > 0, c["part_num"] == cand["part_num"], c["missing"]),
-            )
+            if measured:
+                best = set_colors[0]
+                wanted = any(c["missing"] > 0 and c["matches_photo"] for c in set_colors)
+            else:
+                best = max(
+                    set_colors,
+                    key=lambda c: (c["missing"] > 0, c["part_num"] in exact, c["missing"]),
+                )
+                wanted = best["missing"] > 0
             suggestion = {"part_num": best["part_num"], "color_id": best["color_id"]}
-            wanted = best["missing"] > 0
 
     confirmed = conn.execute(
         "SELECT part_num, color_id, quantity FROM project_parts WHERE detection_id = ?",
@@ -93,8 +129,16 @@ def serialize_detection(
         "candidates": candidates,
         "suggestion": suggestion,
         "wanted": wanted,
+        "color": measured,
         "confirmed": dict(confirmed) if confirmed else None,
     }
+
+
+def project_part_names(conn: sqlite3.Connection, project: sqlite3.Row) -> dict[str, str]:
+    """Part number -> name for every part in the project's set."""
+    part_nums = {i.part_num for i in matcher.inventory_status(conn, project["id"], project["set_num"])}
+    names = lookup_part_names(conn, part_nums)
+    return {num: names.get(num, num) for num in part_nums}
 
 
 def status_by_part(conn: sqlite3.Connection, project: sqlite3.Row) -> dict[str, list]:
@@ -117,6 +161,8 @@ def upload_photo(
     conn: sqlite3.Connection = Depends(get_db),
     settings: Settings = Depends(get_settings),
     recognizer: BrickognizeRecognizer = Depends(get_recognizer),
+    rebrickable: RebrickableClient | None = Depends(get_rebrickable),
+    part_fallback: ClaudePartRecognizer | None = Depends(get_part_fallback),
 ):
     project = get_project_or_404(conn, project_id)
     suffix = Path(file.filename or "").suffix.lower() or ".jpg"
@@ -134,15 +180,35 @@ def upload_photo(
         photo_path.unlink()
         raise HTTPException(415, str(exc)) from exc
 
-    def recognize(crop: detector.Crop) -> tuple[list[dict], str | None]:
+    set_parts = project_part_names(conn, project) if part_fallback else {}
+
+    def recognize(crop: detector.Crop) -> tuple[list[dict], str | None, str | None]:
+        color = measure_color(crop.path)
+        candidates, error = [], None
         try:
-            return [c.to_dict() for c in recognizer.recognize(crop.path)], None
+            candidates = recognizer.recognize(crop.path)
         except RecognitionError as exc:
-            return [], str(exc)
+            error = str(exc)
+        if part_fallback and (not candidates or candidates[0].score < settings.confidence_threshold):
+            # Brickognize failed or is unsure: Claude picks from the set's parts.
+            try:
+                candidates = part_fallback.recognize(crop.path, set_parts) + candidates
+                error = None
+            except RecognitionError as exc:
+                error = f"{error}; {exc}" if error else str(exc)
+        return [c.to_dict() for c in candidates], error, color
 
     # Brickognize takes about a second per crop; a few requests in parallel.
+    # The brick's color is measured too, since Brickognize does not report it.
     with ThreadPoolExecutor(max_workers=RECOGNITION_WORKERS) as pool:
         results = list(pool.map(recognize, crops))
+
+    # Map recognizer (BrickLink) IDs to Rebrickable part numbers once, here.
+    for candidates, _, _ in results:
+        for cand in candidates:
+            cand["aliases"] = catalog_aliases(conn, cand["part_num"])
+            if not cand["aliases"] and rebrickable:
+                cand["aliases"] = rebrickable.parts_for_bricklink_id(conn, cand["part_num"])
 
     with conn:
         photo_id = conn.execute(
@@ -150,8 +216,8 @@ def upload_photo(
             (project_id, kind, relative(settings, photo_path)),
         ).lastrowid
         conn.executemany(
-            "INSERT INTO detections (photo_id, crop_path, bbox, candidates, error)"
-            " VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO detections (photo_id, crop_path, bbox, candidates, error, color)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
             [
                 (
                     photo_id,
@@ -159,8 +225,9 @@ def upload_photo(
                     json.dumps(crop.bbox) if crop.bbox else None,
                     json.dumps(candidates),
                     error,
+                    color,
                 )
-                for crop, (candidates, error) in zip(crops, results)
+                for crop, (candidates, error, color) in zip(crops, results)
             ],
         )
 

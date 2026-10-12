@@ -45,3 +45,12 @@ def test_equivalent_parts_follow_molds_and_prints(db):
     assert equivalent_parts(db, "973") == ["973", "973c01"]
     assert equivalent_parts(db, "3001") == ["3001", "3001pr0001"]
     assert equivalent_parts(db, "nope") == ["nope"]
+
+
+def test_catalog_aliases_map_bricklink_ids_without_network(db):
+    from app.services.inventory import catalog_aliases
+
+    assert catalog_aliases(db, "3001") == ["3001"]
+    assert catalog_aliases(db, "98138pb007") == ["98138"]  # BrickLink print -> base part
+    assert catalog_aliases(db, "4032") == ["4032a", "4032b"]  # variant letter
+    assert catalog_aliases(db, "4073") == []

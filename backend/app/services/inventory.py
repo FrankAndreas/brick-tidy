@@ -3,6 +3,7 @@
 import csv
 import gzip
 import io
+import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
@@ -155,6 +156,31 @@ def equivalent_parts(conn: sqlite3.Connection, part_num: str) -> list[str]:
         (part_num,),
     )
     return [part_num] + sorted({r[0] for r in rows} - {part_num})
+
+
+# BrickLink names printed parts like "98138pb007"; Rebrickable uses "98138pr0008".
+PRINT_SUFFIX = re.compile(r"^(\d+[a-z]?)(?:pb|pr|px|pat|p)\w+$")
+
+
+def catalog_aliases(conn: sqlite3.Connection, part_num: str) -> list[str]:
+    """Rebrickable part numbers for a recognizer (BrickLink) part ID, without network.
+
+    The ID itself if it is in the catalog; otherwise the unprinted base part
+    ("98138pb007" -> "98138"), or mold variants with a letter suffix ("4032" ->
+    "4032a", "4032b"). Empty if none of these exist.
+    """
+    def exists(num: str) -> bool:
+        return conn.execute("SELECT 1 FROM parts WHERE part_num = ?", (num,)).fetchone() is not None
+
+    if exists(part_num):
+        return [part_num]
+    match = PRINT_SUFFIX.match(part_num)
+    if match and exists(match.group(1)):
+        return [match.group(1)]
+    rows = conn.execute(
+        "SELECT part_num FROM parts WHERE part_num GLOB ? ORDER BY part_num", (f"{part_num}[a-z]",)
+    )
+    return [r[0] for r in rows]
 
 
 def get_set(conn: sqlite3.Connection, set_num: str) -> sqlite3.Row | None:

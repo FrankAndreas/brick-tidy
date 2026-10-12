@@ -25,6 +25,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--bg);
@@ -129,3 +130,4 @@ button:disabled { opacity: .5; cursor: default; }
 .legend.wanted { border: 3px solid var(--accent); }
 .legend.found { border: 3px solid var(--ok); }
 .legend.other { border: 2px dashed var(--muted); }
+.color-choice.matches { border: 2px solid var(--ok); font-weight: 600; }

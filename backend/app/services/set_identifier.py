@@ -5,17 +5,15 @@ Candidates are checked against the Rebrickable catalog so that only sets with a
 known inventory are offered.
 """
 
-import base64
-import json
 import sqlite3
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import anthropic
-import cv2
 import httpx
 
+from app.services.claude import ClaudeError, ask_json, image_block
 from app.services.inventory import get_set, normalize_set_num
 from app.services.recognizer import content_type
 
@@ -63,8 +61,6 @@ class BrickognizeSetIdentifier:
         ]
 
 
-CLAUDE_MAX_IMAGE_SIDE = 1568  # larger images are downscaled by the API anyway
-
 CLAUDE_SYSTEM = """\
 You identify official LEGO sets from photos. The photos may show a partially \
 assembled model, the box, building instructions, stickers or loose parts of one set.
@@ -108,33 +104,9 @@ class ClaudeSetIdentifier:
         content = [image_block(p) for p in images]
         content.append({"type": "text", "text": "Which LEGO set is this?"})
         try:
-            # On a safety decline, the API retries on Anthropic's recommended fallback model.
-            response = self.client.beta.messages.create(
-                model=self.model,
-                max_tokens=16000,
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
-                system=CLAUDE_SYSTEM,
-                output_config={
-                    "effort": "medium",
-                    "format": {"type": "json_schema", "schema": CLAUDE_SCHEMA},
-                },
-                messages=[{"role": "user", "content": content}],
-            )
-        except anthropic.AuthenticationError as exc:
-            raise SetIdentificationError("Claude rejected ANTHROPIC_API_KEY") from exc
-        except anthropic.RateLimitError as exc:
-            raise SetIdentificationError("Claude is rate limited; try again later") from exc
-        except anthropic.APIStatusError as exc:
-            raise SetIdentificationError(f"Claude request failed: {exc.message}") from exc
-        except anthropic.APIConnectionError as exc:
-            raise SetIdentificationError("Cannot reach the Claude API") from exc
-
-        if response.stop_reason == "refusal":
-            raise SetIdentificationError("Claude declined to identify these photos")
-        if response.stop_reason == "max_tokens":
-            raise SetIdentificationError("Claude's answer was cut off")
-        text = next(b.text for b in response.content if b.type == "text")
+            answer = ask_json(self.client, self.model, CLAUDE_SYSTEM, content, CLAUDE_SCHEMA)
+        except ClaudeError as exc:
+            raise SetIdentificationError(str(exc)) from exc
         return [
             SetCandidate(
                 normalize_set_num(c["set_num"]),
@@ -142,29 +114,8 @@ class ClaudeSetIdentifier:
                 "claude",
                 c["evidence"] or None,
             )
-            for c in json.loads(text)["candidates"]
+            for c in answer["candidates"]
         ]
-
-
-def image_block(path: Path) -> dict:
-    """JPEG-encode a photo for Claude, downscaled so phone photos stay small."""
-    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
-    if image is None:
-        raise ValueError(f"Cannot read image {path.name}")
-    scale = min(1.0, CLAUDE_MAX_IMAGE_SIDE / max(image.shape[:2]))
-    if scale < 1.0:
-        image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-    ok, jpeg = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    if not ok:
-        raise ValueError(f"Cannot encode image {path.name}")
-    return {
-        "type": "image",
-        "source": {
-            "type": "base64",
-            "media_type": "image/jpeg",
-            "data": base64.standard_b64encode(jpeg.tobytes()).decode("ascii"),
-        },
-    }
 
 
 @dataclass

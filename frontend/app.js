@@ -69,7 +69,11 @@ async function router() {
       try {
         await view(...match.slice(1));
       } catch (error) {
-        app.innerHTML = `<div class="card">Error: ${esc(error.message)}</div>`;
+        // fetch() rejects with a TypeError when the server cannot be reached.
+        app.innerHTML = error instanceof TypeError
+          ? `<div class="card">Cannot reach the Brick Tidy server. Check that you are on the same
+              network, then <a href="javascript:location.reload()">try again</a>.</div>`
+          : `<div class="card">Error: ${esc(error.message)}</div>`;
       }
       return;
     }
@@ -299,7 +303,8 @@ function bindReviewForm(form, detection, inventory, allColors) {
     colorSelect.innerHTML = `
       ${setLines.length ? `<optgroup label="In this set">${setLines.map((c) => {
         const value = `${c.part_num}|${c.color_id}`;
-        const label = `${c.color_name}${c.part_num !== partNum ? ` (as ${c.part_num})` : ""} – ${c.missing} missing`;
+        const label = `${c.color_name}${c.part_num !== partNum ? ` (as ${c.part_num})` : ""} – ${c.missing} missing`
+          + (c.matches_photo ? " · matches photo" : "");
         return `<option value="${esc(value)}" ${value === suggested ? "selected" : ""}>${esc(label)}</option>`;
       }).join("")}</optgroup>` : ""}
       <optgroup label="All colors">${allColors.filter((c) => !setIds.has(c.id)).map((c) =>
@@ -338,6 +343,7 @@ function reviewCard(d, inventory) {
     <form class="card review" data-id="${d.id}">
       <img class="crop" src="${esc(d.crop_url)}" alt="Photo to review">
       <div class="muted">${d.kind === "build" ? "Part of the build" : "Loose brick"}
+        ${d.color ? ` · ${swatch(d.color)}color in the photo` : ""}
         ${d.error ? ` · <span class="tag warn">recognition failed</span>`
           : d.low_confidence ? ` · <span class="tag warn">low confidence – please check</span>` : ""}</div>
       <ul class="candidates">
@@ -349,6 +355,8 @@ function reviewCard(d, inventory) {
               <span class="name">${esc(c.name)}</span><br>
               <span class="muted">${esc(c.part_num)} · ${Math.round(c.score * 100)}%</span>
               ${c.in_set ? `<span class="tag ok">in set</span>` : `<span class="tag warn">not in set</span>`}
+              ${c.source === "claude" ? `<span class="tag">Claude</span>` : ""}
+              ${c.reason ? `<br><span class="muted">${esc(c.reason)}</span>` : ""}
             </span>
           </label></li>`).join("")}
         <li><label>
@@ -432,8 +440,12 @@ function showBrick(target, d, inventory, allColors) {
   const suggested = top?.set_colors.find((c) =>
     c.part_num === d.suggestion?.part_num && c.color_id === d.suggestion?.color_id);
   const name = (suggested && inventory.find((i) => i.part_num === suggested.part_num)?.part_name) ?? top?.name;
-  const missingColors = (top?.set_colors ?? []).filter((c) => c.missing > 0)
-    .sort((a, b) => b.missing - a.missing);
+  // Closest to the measured color first (the server orders them); else most missing first.
+  const missingColors = (top?.set_colors ?? []).filter((c) => c.missing > 0);
+  if (!d.color) missingColors.sort((a, b) => b.missing - a.missing);
+  // Common parts come in many colors: show the ones matching the photo, the rest on request.
+  const unmatched = missingColors.filter((c) => !c.matches_photo).length;
+  const hideUnmatched = unmatched > 0 && unmatched < missingColors.length;
   target.innerHTML = `
     <div class="part brick-summary">
       <img src="${esc(d.crop_url)}" alt="">
@@ -442,13 +454,21 @@ function showBrick(target, d, inventory, allColors) {
         <div class="muted">${d.status === "confirmed" ? `<span class="tag ok">recorded as found</span>`
           : missingColors.length ? "Which color is it?" : top?.in_set ? "all of these are present"
           : top ? "not in this set" : "not recognized"}</div>
+        ${d.color ? `<div class="muted">${swatch(d.color)}color in the photo</div>` : ""}
       </div>
     </div>
     ${d.status === "pending" && missingColors.length ? `<div class="row">${missingColors.map((c, i) => `
-      <button class="small color-choice" data-index="${i}">${swatch(c.color_rgb)}${esc(c.color_name)}
-        <span class="muted">${c.missing}×</span></button>`).join("")}</div>` : ""}
+      <button class="small color-choice ${c.matches_photo ? "matches" : ""}" data-index="${i}"
+        ${hideUnmatched && !c.matches_photo ? "hidden" : ""}>
+        ${swatch(c.color_rgb)}${esc(c.color_name)} <span class="muted">${c.missing}×</span></button>`).join("")}
+      ${hideUnmatched ? `<button class="small" data-action="more">More colors (${unmatched})</button>` : ""}</div>`
+      : ""}
     <div class="row"><button class="small" data-action="details">Other part or color…</button></div>
     <div class="details"></div>`;
+  target.querySelector("[data-action=more]")?.addEventListener("click", (event) => {
+    target.querySelectorAll(".color-choice[hidden]").forEach((b) => { b.hidden = false; });
+    event.currentTarget.remove();
+  });
   target.querySelectorAll(".color-choice").forEach((button) => {
     button.addEventListener("click", async () => {
       const c = missingColors[Number(button.dataset.index)];
@@ -477,7 +497,8 @@ async function renderMissing(section, project) {
   }
   section.innerHTML = `
     <div class="row" style="justify-content:flex-end;margin-bottom:12px">
-      <button class="small" id="export">Export CSV</button>
+      <button class="small" data-export="details">Export CSV</button>
+      <button class="small" data-export="rebrickable">Rebrickable CSV</button>
     </div>
     ${missing.map((m, index) => `
       <div class="card">${partRow(m, `
@@ -494,14 +515,24 @@ async function renderMissing(section, project) {
       refresh();
     });
   });
-  document.getElementById("export").addEventListener("click", () => {
-    const lines = ["part_num,color_id,part_name,color_name,quantity",
-      ...missing.map((m) => [m.part_num, m.color_id, m.part_name, m.color_name, m.missing]
-        .map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))];
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
-    link.download = `${project.set_num}-missing.csv`;
-    link.click();
+  // "rebrickable" is Rebrickable's parts list import format (Part, Color, Quantity with
+  // Rebrickable IDs); Rebrickable can turn an imported list into a BrickLink wanted list.
+  const formats = {
+    details: { name: "missing", header: ["part_num", "color_id", "part_name", "color_name", "quantity"],
+      row: (m) => [m.part_num, m.color_id, m.part_name, m.color_name, m.missing] },
+    rebrickable: { name: "rebrickable", header: ["Part", "Color", "Quantity"],
+      row: (m) => [m.part_num, m.color_id, m.missing] },
+  };
+  section.querySelectorAll("button[data-export]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const format = formats[button.dataset.export];
+      const csv = (values) => values.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",");
+      const lines = [format.header.join(","), ...missing.map((m) => csv(format.row(m)))];
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+      link.download = `${project.set_num}-${format.name}.csv`;
+      link.click();
+    });
   });
 }
 

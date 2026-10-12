@@ -20,20 +20,27 @@ cd backend && .venv/bin/uvicorn app.main:create_app --factory --reload --host 0.
 Copy `.env.example` to `.env` to change settings. The catalog import can be re-run at any time to
 refresh the Rebrickable data; projects are kept.
 
-**Status:** roadmap steps 1–4 are implemented:
+**Status:** roadmap steps 1–5 are implemented:
 
 - **Set identification:** start a project by typing the set number, or by photographing the box,
   instructions or partial build. Brickognize suggests sets; when it is unsure, fails or finds nothing,
   Claude is asked too (only if `ANTHROPIC_API_KEY` is set). You pick the set from the suggestions.
 - **Detection and recognition:** photograph a small batch of bricks spread out on a plain surface;
-  each brick is cropped (OpenCV), recognized by Brickognize, and offered for review.
-- **Find bricks:** photos of loose bricks are shown with a box around each brick; parts the set still
-  needs are highlighted. Tap a box and pick the brick's color to mark it as found. Colors are not
-  recognized yet, so a highlighted part may be needed only in another color.
+  each brick is cropped (OpenCV) and recognized by Brickognize. For bricks Brickognize is unsure
+  about, Claude picks from the set's parts list (only if `ANTHROPIC_API_KEY` is set).
+- **Color:** each brick's color is measured in its crop and compared with the colors the part has in
+  the set (CIE94 color difference), so the right color is preselected.
+- **Part IDs:** Brickognize returns BrickLink part IDs. These are mapped to the set's Rebrickable part
+  numbers via Rebrickable's mold, alternate and print relationships (61678 → 11153), BrickLink print
+  and variant naming (98138pb007 → 98138, 4032 → 4032a), and, if `REBRICKABLE_API_KEY` is set,
+  Rebrickable's API (4073 → 6141).
+- **Find bricks:** photos of loose bricks are shown with a box around each brick; bricks the set
+  still needs in a matching color are highlighted. Tap a box and pick the color to mark it as found.
 - **Review and missing list:** confirm or correct each brick, list parts by hand, view the missing
-  list and export it as CSV. Brickognize returns BrickLink part IDs. These are mapped to the set's
-  Rebrickable part numbers via Rebrickable's mold, alternate and print relationships
-  (e.g. 61678 → 11153).
+  list and export it as CSV, or in Rebrickable's import format (Rebrickable can turn it into a
+  BrickLink wanted list).
+- **Install as an app:** with HTTPS (see Deployment) the app can be installed from the browser and
+  opens without network; over plain HTTP everything else works the same.
 
 Brickognize's keyless endpoints are marked "legacy" in its API; it also offers a paid API with
 credits. If the free endpoints become unavailable, brick recognition falls back to manual review.
@@ -205,8 +212,8 @@ Environment variables (example):
 ```
 BRICKOGNIZE_URL=https://api.brickognize.com/predict/
 BRICKOGNIZE_SETS_URL=https://api.brickognize.com/predict/sets/
-REBRICKABLE_API_KEY=...        # optional, CSV import works without it
-ANTHROPIC_API_KEY=...          # optional, Claude as set identification fallback
+REBRICKABLE_API_KEY=...        # optional, maps unknown BrickLink part IDs
+ANTHROPIC_API_KEY=...          # optional, Claude fallback for sets and bricks
 CLAUDE_MODEL=claude-opus-5-5
 CONFIDENCE_THRESHOLD=0.5
 DATA_DIR=./data
@@ -219,6 +226,8 @@ See `.env.example`.
 - Recognizing a *partially assembled* model's parts is hard (occlusion); expect to confirm manually.
 - Similar colors (e.g. light gray vs. light bluish gray) and rare part variants are error-prone.
 - Piles of many bricks work much worse than small batches on a plain background.
+- Detection and color measurement were tuned on catalog part images composited onto synthetic
+  backgrounds, not yet on real phone photos; white under warm, dim light reads as light gray.
 - Brickognize and LLM calls require internet access and are subject to the providers' terms and limits.
 
 ## Related open-source projects
