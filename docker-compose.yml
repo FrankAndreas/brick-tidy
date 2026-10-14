@@ -1,6 +1,11 @@
+# Local use (laptop): builds the image from this checkout. For a NAS, use
+# docker-compose.nas.yml with the published image instead (see docs/deploy-nas.md).
 services:
   brick-tidy:
     build: .
+    image: brick-tidy:local
+    # The user owning ./data (on most Linux desktops 1000:1000)
+    user: "${PUID:-1000}:${PGID:-1000}"
     ports:
       - "8080:8080"
     volumes:
@@ -8,4 +13,6 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      DATA_DIR: /data    # wins over DATA_DIR in .env, which is for running without Docker
     restart: unless-stopped

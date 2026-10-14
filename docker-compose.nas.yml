@@ -1,0 +1,22 @@
+# NAS deployment with the image published by CI. Copy it to the app folder on
+# the NAS as compose.yaml; see docs/deploy-nas.md.
+#
+# The app runs as PUID:PGID from .env (default 1000:1000, the image's own user).
+# On a Synology, use the IDs of a DSM user made for the app. The ./data folder
+# must exist and belong to that user before the first start.
+
+services:
+  brick-tidy:
+    image: ghcr.io/frankandreas/brick-tidy:latest
+    container_name: brick-tidy
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data    # database, photos, Rebrickable CSVs
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATA_DIR: /data    # wins over DATA_DIR in .env, which is for running without Docker
+    restart: unless-stopped

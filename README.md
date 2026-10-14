@@ -166,7 +166,9 @@ sorting hardware, multi-user accounts.
 ## Deployment
 
 - **Laptop:** `docker compose up`, open `http://<laptop-ip>:8080` on the phone (same Wi-Fi).
-- **Synology NAS:** same container via Container Manager; run the heavy detection on a stronger machine if the NAS CPU is weak.
+- **Synology NAS:** the image CI publishes to `ghcr.io/frankandreas/brick-tidy`, with
+  `docker-compose.nas.yml`, nightly auto-updates (`scripts/nas-update.sh`, with database backup and
+  rollback) and `scripts/deploy-nas.sh` to deploy from a laptop. See [docs/deploy-nas.md](docs/deploy-nas.md).
 - **Camera / HTTPS:** the file-input capture works over plain HTTP. For live camera preview or
   remote access, use HTTPS (Synology reverse proxy + Let's Encrypt, Tailscale, or mkcert).
 
