@@ -14,9 +14,7 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data    # database, photos, Rebrickable CSVs
-    env_file:
-      - path: .env
-        required: false
+    env_file: .env      # PUID/PGID and optional API keys; must exist (may be empty)
     environment:
       DATA_DIR: /data    # wins over DATA_DIR in .env, which is for running without Docker
     restart: unless-stopped
