@@ -3,6 +3,6 @@ uvicorn==0.54.0
 python-multipart==0.0.32
 httpx==0.28.1
 pydantic-settings==2.16.1
-anthropic==1.13.0
+anthropic==1.17.0
 opencv-python-headless==5.0.0.93
 numpy==2.5.4
