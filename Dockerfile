@@ -1,12 +1,12 @@
 # Build stage: install the dependencies into a virtual environment.
-FROM python:3.12-slim AS build
+FROM python:3.14-slim AS build
 RUN python -m venv /opt/venv
 COPY backend/requirements.txt /tmp/requirements.txt
 RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt \
     && /opt/venv/bin/pip uninstall -y pip
 
 # Runtime stage: the finished environment plus the app, no install step.
-FROM python:3.12-slim
+FROM python:3.14-slim
 COPY --from=build /opt/venv /opt/venv
 
 WORKDIR /app
