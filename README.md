@@ -238,4 +238,8 @@ See `.env.example`.
 - [lego-detector](https://github.com/thomas-rooty/lego-detector) – OpenCV detection + TensorFlow classification
 - [LegoBrickClassification](https://github.com/jtheiner/LegoBrickClassification) – synthetic data + classifier
 
+## License
+
+[MIT](LICENSE)
+
 LEGO® is a trademark of the LEGO Group, which does not sponsor, authorize or endorse this project.
