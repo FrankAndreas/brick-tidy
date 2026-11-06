@@ -35,8 +35,10 @@ detections), the photos and the downloaded Rebrickable CSVs.
    printf 'PUID=1032\nPGID=100\n' | sudo tee .env    # IDs from step 1
    sudo chmod 600 .env
    ```
-   Add `ANTHROPIC_API_KEY=...` (Claude fallback for set and brick recognition) and
-   `REBRICKABLE_API_KEY=...` (better part-ID mapping) if you have them. Keep `.env` private.
+   Add `INFOMANIAK_AI_TOKEN=...` and `INFOMANIAK_AI_PRODUCT_ID=...` (Infomaniak AI fallback for set
+   and brick recognition), or `ANTHROPIC_API_KEY=...` for Claude instead (see
+   [AI fallback](../README.md#ai-fallback)), and `REBRICKABLE_API_KEY=...` (better part-ID mapping)
+   if you have them. Keep `.env` private.
 4. **Import the Rebrickable catalog** (about a minute on a NAS; the database grows to ~160 MB):
    ```bash
    sudo docker-compose run --rm brick-tidy python /app/scripts/import_rebrickable.py --download

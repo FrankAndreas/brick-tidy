@@ -22,7 +22,7 @@ from app.services import detector, matcher
 from app.services.colors import MATCH_DISTANCE, color_distance, measure_color
 from app.services.inventory import catalog_aliases, equivalent_parts
 from app.services.rebrickable import RebrickableClient
-from app.services.recognizer import BrickognizeRecognizer, ClaudePartRecognizer, RecognitionError
+from app.services.recognizer import AiPartRecognizer, BrickognizeRecognizer, RecognitionError
 
 router = APIRouter(prefix="/api", tags=["photos"])
 
@@ -162,7 +162,7 @@ def upload_photo(
     settings: Settings = Depends(get_settings),
     recognizer: BrickognizeRecognizer = Depends(get_recognizer),
     rebrickable: RebrickableClient | None = Depends(get_rebrickable),
-    part_fallback: ClaudePartRecognizer | None = Depends(get_part_fallback),
+    part_fallback: AiPartRecognizer | None = Depends(get_part_fallback),
 ):
     project = get_project_or_404(conn, project_id)
     suffix = Path(file.filename or "").suffix.lower() or ".jpg"
@@ -190,7 +190,7 @@ def upload_photo(
         except RecognitionError as exc:
             error = str(exc)
         if part_fallback and (not candidates or candidates[0].score < settings.confidence_threshold):
-            # Brickognize failed or is unsure: Claude picks from the set's parts.
+            # Brickognize failed or is unsure: the AI picks from the set's parts.
             try:
                 candidates = part_fallback.recognize(crop.path, set_parts) + candidates
                 error = None

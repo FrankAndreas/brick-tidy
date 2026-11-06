@@ -40,6 +40,7 @@ async function colors() {
 
 const swatch = (rgb) => (rgb ? `<span class="swatch" style="background:#${esc(rgb)}"></span>` : "");
 const partImage = (url) => (url ? `<img src="${esc(url)}" alt="" loading="lazy">` : `<div class="noimg"></div>`);
+const AI_NAMES = { claude: "Claude", infomaniak: "Infomaniak AI" };
 
 function partRow(item, right) {
   return `
@@ -355,7 +356,7 @@ function reviewCard(d, inventory) {
               <span class="name">${esc(c.name)}</span><br>
               <span class="muted">${esc(c.part_num)} · ${Math.round(c.score * 100)}%</span>
               ${c.in_set ? `<span class="tag ok">in set</span>` : `<span class="tag warn">not in set</span>`}
-              ${c.source === "claude" ? `<span class="tag">Claude</span>` : ""}
+              ${c.source && c.source !== "brickognize" ? `<span class="tag">${esc(AI_NAMES[c.source] || c.source)}</span>` : ""}
               ${c.reason ? `<br><span class="muted">${esc(c.reason)}</span>` : ""}
             </span>
           </label></li>`).join("")}

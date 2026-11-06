@@ -1,4 +1,4 @@
-"""Set identification from photos: Brickognize first, Claude as an optional fallback.
+"""Set identification from photos: Brickognize first, an AI (Infomaniak or Claude) as fallback.
 
 Both only suggest candidates; the user confirms the set (or types its number).
 Candidates are checked against the Rebrickable catalog so that only sets with a
@@ -10,10 +10,9 @@ from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import anthropic
 import httpx
 
-from app.services.claude import ClaudeError, ask_json, image_block
+from app.services.ai import AiClient, AiError, image, text
 from app.services.inventory import get_set, normalize_set_num
 from app.services.recognizer import content_type
 
@@ -26,8 +25,8 @@ class SetIdentificationError(Exception):
 class SetCandidate:
     set_num: str
     score: float
-    source: str  # "brickognize" or "claude"
-    evidence: str | None = None  # Claude's reason, e.g. a set number read on the box
+    source: str  # "brickognize", or the AI provider: "infomaniak" or "claude"
+    evidence: str | None = None  # the AI's reason, e.g. a set number read on the box
 
 
 class BrickognizeSetIdentifier:
@@ -61,7 +60,7 @@ class BrickognizeSetIdentifier:
         ]
 
 
-CLAUDE_SYSTEM = """\
+AI_SYSTEM = """\
 You identify official LEGO sets from photos. The photos may show a partially \
 assembled model, the box, building instructions, stickers or loose parts of one set.
 
@@ -72,7 +71,7 @@ anywhere in the photos, list that set first and say where you read it in \
 your probability from 0 to 1 that the candidate is correct. Return an empty \
 list if the photos do not show LEGO."""
 
-CLAUDE_SCHEMA = {
+AI_SCHEMA = {
     "type": "object",
     "properties": {
         "candidates": {
@@ -95,23 +94,23 @@ CLAUDE_SCHEMA = {
 }
 
 
-class ClaudeSetIdentifier:
-    def __init__(self, model: str, client: anthropic.Anthropic):
-        self.model = model
-        self.client = client
+class AiSetIdentifier:
+    def __init__(self, ai: AiClient):
+        self.ai = ai
+        self.name = ai.name
 
     def identify(self, images: list[Path]) -> list[SetCandidate]:
-        content = [image_block(p) for p in images]
-        content.append({"type": "text", "text": "Which LEGO set is this?"})
+        content = [image(p) for p in images]
+        content.append(text("Which LEGO set is this?"))
         try:
-            answer = ask_json(self.client, self.model, CLAUDE_SYSTEM, content, CLAUDE_SCHEMA)
-        except ClaudeError as exc:
+            answer = self.ai.ask_json(AI_SYSTEM, content, AI_SCHEMA)
+        except AiError as exc:
             raise SetIdentificationError(str(exc)) from exc
         return [
             SetCandidate(
                 normalize_set_num(c["set_num"]),
                 min(max(float(c["confidence"]), 0.0), 1.0),
-                "claude",
+                self.ai.name,
                 c["evidence"] or None,
             )
             for c in answer["candidates"]
@@ -126,24 +125,24 @@ class IdentificationResult:
 
 
 class SetIdentifier:
-    """Ask Brickognize; ask Claude too when Brickognize is unsure, fails or finds nothing."""
+    """Ask Brickognize; ask the AI too when Brickognize is unsure, fails or finds nothing."""
 
     def __init__(
         self,
         brickognize: BrickognizeSetIdentifier,
-        claude: ClaudeSetIdentifier | None,
+        ai: AiSetIdentifier | None,
         confidence_threshold: float,
     ):
         self.brickognize = brickognize
-        self.claude = claude
+        self.ai = ai
         self.confidence_threshold = confidence_threshold
 
     def identify(self, conn: sqlite3.Connection, images: list[Path]) -> IdentificationResult:
         result = IdentificationResult()
         found = self._ask("brickognize", self.brickognize, images, result)
         known = merge_known(conn, found)
-        if self.claude and (not known or known[0]["score"] < self.confidence_threshold):
-            found += self._ask("claude", self.claude, images, result)
+        if self.ai and (not known or known[0]["score"] < self.confidence_threshold):
+            found += self._ask(self.ai.name, self.ai, images, result)
             found.sort(key=lambda c: c.score, reverse=True)
             known = merge_known(conn, found)
         result.candidates = known

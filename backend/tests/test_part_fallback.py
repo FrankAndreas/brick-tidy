@@ -4,7 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.services.recognizer import Candidate, ClaudePartRecognizer, RecognitionError
+from app.services.claude import ClaudeClient
+from app.services.recognizer import AiPartRecognizer, Candidate, RecognitionError
 from tests.images import RED, make_photo
 from tests.test_set_identifier import FakeClaude
 
@@ -25,7 +26,7 @@ def test_claude_picks_from_the_set_parts_and_list_is_cached(crop):
             {"part_num": "9999", "confidence": 0.5, "reason": "not in the list"},
         ]
     )
-    candidates = ClaudePartRecognizer("claude-opus-5-5", client).recognize(crop, SET_PARTS)
+    candidates = AiPartRecognizer(ClaudeClient("claude-opus-5-5", client)).recognize(crop, SET_PARTS)
     assert candidates == [Candidate("3003", "Brick 2 x 2", 0.8, source="claude", reason="2x2 studs")]
     [request] = client.requests
     parts_block = request["messages"][0]["content"][0]
@@ -35,7 +36,7 @@ def test_claude_picks_from_the_set_parts_and_list_is_cached(crop):
 
 def test_claude_failure_becomes_recognition_error(crop):
     with pytest.raises(RecognitionError):
-        ClaudePartRecognizer("m", FakeClaude(stop_reason="refusal")).recognize(crop, SET_PARTS)
+        AiPartRecognizer(ClaudeClient("m", FakeClaude(stop_reason="refusal"))).recognize(crop, SET_PARTS)
 
 
 class FakeFallback:

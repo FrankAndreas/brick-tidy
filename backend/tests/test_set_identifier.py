@@ -8,9 +8,10 @@ import httpx
 import numpy as np
 import pytest
 
+from app.services.claude import ClaudeClient
 from app.services.set_identifier import (
+    AiSetIdentifier,
     BrickognizeSetIdentifier,
-    ClaudeSetIdentifier,
     SetCandidate,
     SetIdentificationError,
     SetIdentifier,
@@ -59,7 +60,29 @@ class FakeClaude:
         )
 
 
-def claude_candidate(set_num, confidence=0.9, evidence="number on the box"):
+class FakeAi:
+    """Stands in for an AI provider: records the questions, returns canned candidates."""
+
+    name = "infomaniak"
+    model = "fake"
+
+    def __init__(self, candidates=None, error=None):
+        self.requests = []
+        self.candidates = candidates or []
+        self.error = error
+
+    def ask_json(self, system, content, schema):
+        self.requests.append({"system": system, "content": content, "schema": schema})
+        if self.error:
+            raise self.error
+        return {"candidates": self.candidates}
+
+
+def claude_identifier(client):
+    return AiSetIdentifier(ClaudeClient("claude-opus-5-5", client))
+
+
+def ai_candidate(set_num, confidence=0.9, evidence="number on the box"):
     return {"set_num": set_num, "name": "x", "confidence": confidence, "evidence": evidence}
 
 
@@ -86,8 +109,8 @@ def test_brickognize_failure_raises(photos):
 
 
 def test_claude_request_and_parsing(photos):
-    client = FakeClaude([claude_candidate("1234", 1.4), claude_candidate("5678-1", 0.2, "")])
-    candidates = ClaudeSetIdentifier("claude-opus-5-5", client).identify(photos)
+    client = FakeClaude([ai_candidate("1234", 1.4), ai_candidate("5678-1", 0.2, "")])
+    candidates = claude_identifier(client).identify(photos)
 
     assert candidates == [
         SetCandidate("1234-1", 1.0, "claude", "number on the box"),
@@ -107,66 +130,77 @@ def test_claude_request_and_parsing(photos):
 
 def test_claude_refusal_raises(photos):
     with pytest.raises(SetIdentificationError, match="declined"):
-        ClaudeSetIdentifier("m", FakeClaude(stop_reason="refusal")).identify(photos)
+        claude_identifier(FakeClaude(stop_reason="refusal")).identify(photos)
 
 
 def test_claude_connection_error_raises(photos):
     error = anthropic.APIConnectionError(request=None)
     with pytest.raises(SetIdentificationError, match="reach"):
-        ClaudeSetIdentifier("m", FakeClaude(error=error)).identify(photos)
+        claude_identifier(FakeClaude(error=error)).identify(photos)
 
 
-def test_confident_brickognize_result_skips_claude(db, photos):
-    claude = FakeClaude([claude_candidate("5678-1")])
+def test_confident_brickognize_result_skips_ai(db, photos):
+    ai = FakeAi([ai_candidate("5678-1")])
     identifier = SetIdentifier(
         brickognize([{"id": "1234-1", "type": "set", "score": 0.8}]),
-        ClaudeSetIdentifier("m", claude),
+        AiSetIdentifier(ai),
         confidence_threshold=0.5,
     )
     result = identifier.identify(db, photos)
     assert [c["set_num"] for c in result.candidates] == ["1234-1"]
     assert result.candidates[0]["name"] == "Test House"
     assert result.sources == ["brickognize"]
-    assert claude.requests == []
+    assert ai.requests == []
 
 
-def test_unsure_brickognize_asks_claude_and_merges(db, photos):
-    claude = FakeClaude([claude_candidate("5678-1", 0.9), claude_candidate("1234-1", 0.4),
-                         claude_candidate("9999-1", 0.8)])  # not in the catalog
+def test_unsure_brickognize_asks_ai_and_merges(db, photos):
+    ai = FakeAi([ai_candidate("5678-1", 0.9), ai_candidate("1234-1", 0.4),
+                 ai_candidate("9999-1", 0.8)])  # not in the catalog
     identifier = SetIdentifier(
         brickognize([{"id": "1234-1", "type": "set", "score": 0.3}]),
-        ClaudeSetIdentifier("m", claude),
+        AiSetIdentifier(ai),
         confidence_threshold=0.5,
     )
     result = identifier.identify(db, photos)
     assert [(c["set_num"], c["score"], c["sources"]) for c in result.candidates] == [
-        ("5678-1", 0.9, ["claude"]),
-        ("1234-1", 0.4, ["claude", "brickognize"]),
+        ("5678-1", 0.9, ["infomaniak"]),
+        ("1234-1", 0.4, ["infomaniak", "brickognize"]),
     ]
-    assert result.sources == ["brickognize", "claude"]
+    assert result.sources == ["brickognize", "infomaniak"]
 
 
 def test_unknown_brickognize_sets_count_as_nothing_found(db, photos):
-    claude = FakeClaude([claude_candidate("5678-1")])
+    ai = FakeAi([ai_candidate("5678-1")])
     identifier = SetIdentifier(
         brickognize([{"id": "9999-1", "type": "set", "score": 0.9}]),
-        ClaudeSetIdentifier("m", claude),
+        AiSetIdentifier(ai),
         confidence_threshold=0.5,
     )
     assert [c["set_num"] for c in identifier.identify(db, photos).candidates] == ["5678-1"]
 
 
-def test_brickognize_down_falls_back_to_claude(db, photos):
+def test_brickognize_down_falls_back_to_ai(db, photos):
     identifier = SetIdentifier(
-        brickognize(status=503), ClaudeSetIdentifier("m", FakeClaude([claude_candidate("1234")])), 0.5
+        brickognize(status=503), AiSetIdentifier(FakeAi([ai_candidate("1234")])), 0.5
     )
     result = identifier.identify(db, photos)
     assert [c["set_num"] for c in result.candidates] == ["1234-1"]
-    assert result.sources == ["claude"]
+    assert result.sources == ["infomaniak"]
     assert result.errors and "Brickognize" in result.errors[0]
 
 
-def test_without_claude_only_brickognize_is_used(db, photos):
+def test_without_ai_only_brickognize_is_used(db, photos):
     identifier = SetIdentifier(brickognize(status=503), None, 0.5)
     result = identifier.identify(db, photos)
     assert result.candidates == [] and result.sources == [] and len(result.errors) == 1
+
+
+def test_ai_error_is_reported_not_raised(db, photos):
+    from app.services.ai import AiError
+
+    identifier = SetIdentifier(
+        brickognize(status=503), AiSetIdentifier(FakeAi(error=AiError("Infomaniak AI is rate limited"))), 0.5
+    )
+    result = identifier.identify(db, photos)
+    assert result.candidates == [] and result.sources == []
+    assert result.errors[-1] == "Infomaniak AI is rate limited"

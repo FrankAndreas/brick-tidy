@@ -24,10 +24,11 @@ refresh the Rebrickable data; projects are kept.
 
 - **Set identification:** start a project by typing the set number, or by photographing the box,
   instructions or partial build. Brickognize suggests sets; when it is unsure, fails or finds nothing,
-  Claude is asked too (only if `ANTHROPIC_API_KEY` is set). You pick the set from the suggestions.
+  the AI is asked too (if one is configured, see [AI fallback](#ai-fallback)). You pick the set from
+  the suggestions.
 - **Detection and recognition:** photograph a small batch of bricks spread out on a plain surface;
   each brick is cropped (OpenCV) and recognized by Brickognize. For bricks Brickognize is unsure
-  about, Claude picks from the set's parts list (only if `ANTHROPIC_API_KEY` is set).
+  about, the AI picks from the set's parts list (if one is configured).
 - **Color:** each brick's color is measured in its crop and compared with the colors the part has in
   the set (CIE94 color difference), so the right color is preselected.
 - **Part IDs:** Brickognize returns BrickLink part IDs. These are mapped to the set's Rebrickable part
@@ -108,8 +109,8 @@ sorting hardware, multi-user accounts.
 
 ### 2. Set Identifier (Brickognize, LLM fallback)
 - Input: photo(s) of the partial build, the box, stickers, or loose pieces.
-- Primary: Brickognize set recognition (free, no key). Fallback: a vision LLM (Claude) when
-  Brickognize is unsure or unavailable.
+- Primary: Brickognize set recognition (free, no key). Fallback: a vision LLM (Infomaniak AI or
+  Claude) when Brickognize is unsure or unavailable.
 - Output: up to 3–5 candidate sets with confidence and any set number read from the image.
 - The user confirms the set; this keeps the weakest step cheap and safe.
 - Alternative path: user types the set number directly.
@@ -215,13 +216,45 @@ Environment variables (example):
 BRICKOGNIZE_URL=https://api.brickognize.com/predict/
 BRICKOGNIZE_SETS_URL=https://api.brickognize.com/predict/sets/
 REBRICKABLE_API_KEY=...        # optional, maps unknown BrickLink part IDs
-ANTHROPIC_API_KEY=...          # optional, Claude fallback for sets and bricks
+AI_PROVIDER=infomaniak         # optional: infomaniak | claude | none, see below
+INFOMANIAK_AI_TOKEN=...        # Infomaniak AI fallback for sets and bricks
+INFOMANIAK_AI_PRODUCT_ID=...
+AI_MODEL=google/gemma-4-31B-it
+ANTHROPIC_API_KEY=...          # or: Claude fallback for sets and bricks
 CLAUDE_MODEL=claude-opus-5-5
 CONFIDENCE_THRESHOLD=0.5
 DATA_DIR=./data
 ```
 
 See `.env.example`.
+
+### AI fallback
+
+When Brickognize is unsure about a set or a brick (best score below `CONFIDENCE_THRESHOLD`), fails
+or finds nothing, an AI is asked: for a set it looks at the photos, for a brick it picks from the
+set's parts list. It only suggests; you confirm.
+
+- **`AI_PROVIDER`** chooses it: `infomaniak`, `claude` or `none`. Left empty, Infomaniak is used if
+  its token and product ID are set, else Claude if `ANTHROPIC_API_KEY` is set (setups from before
+  keep working), else the fallback is off. The choice is logged at startup, e.g.
+  `AI: infomaniak (google/gemma-4-31B-it)`.
+- **Infomaniak AI** (default model `google/gemma-4-31B-it`, processed in Switzerland). In the
+  Infomaniak Manager, create an API token with **only the `ai-tools` scope** and a lifetime, note the
+  AI product's ID, and **set a spending limit** on the AI product: it is the outer cost control. The
+  names are the same as in `meal-planer`, so one token setup serves both. The server needs outgoing
+  HTTPS to `api.infomaniak.com`.
+- **Claude** (Anthropic): `ANTHROPIC_API_KEY`, and `CLAUDE_MODEL` (default `claude-opus-5-5`).
+
+**What leaves the house:** only the photos the AI is asked about, downscaled to at most 1568 px and
+re-encoded as JPEG (without EXIF, so no location), and for bricks the set's parts list (part
+numbers and names). With Infomaniak they go to Infomaniak's servers in Switzerland; with Claude to
+Anthropic's API (USA). Nothing else (projects, inventory, other photos) is sent. With
+`AI_PROVIDER=none` nothing goes to an AI; Brickognize still gets the photos and crops it is asked
+about.
+
+Whether the open model is as good as Claude for these hard cases can be measured with
+`backend/tools/compare_ai.py` (see the script's docstring); it costs a little per run and is
+never run in CI.
 
 ## Known limitations
 
