@@ -9,7 +9,12 @@ class Settings(BaseSettings):
     brickognize_url: str = "https://api.brickognize.com/predict/"
     brickognize_sets_url: str = "https://api.brickognize.com/predict/sets/"
     rebrickable_api_key: str | None = None
-    # Optional: Claude identifies the set when Brickognize is unsure or unavailable.
+    # The AI asked when Brickognize is unsure about a set or a part: "infomaniak", "claude"
+    # or "none". Unset: Infomaniak if its token is set, else Claude if its key is set.
+    ai_provider: str | None = None
+    infomaniak_ai_token: str | None = None
+    infomaniak_ai_product_id: str | None = None
+    ai_model: str = "google/gemma-4-31B-it"  # Infomaniak's model
     anthropic_api_key: str | None = None
     claude_model: str = "claude-opus-5-5"
     confidence_threshold: float = 0.5

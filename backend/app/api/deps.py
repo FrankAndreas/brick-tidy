@@ -6,7 +6,7 @@ from fastapi import HTTPException, Request
 from app.config import Settings
 from app.db import connect
 from app.services.rebrickable import RebrickableClient
-from app.services.recognizer import BrickognizeRecognizer, ClaudePartRecognizer
+from app.services.recognizer import AiPartRecognizer, BrickognizeRecognizer
 from app.services.set_identifier import SetIdentifier
 
 
@@ -26,7 +26,7 @@ def get_recognizer(request: Request) -> BrickognizeRecognizer:
     return request.app.state.recognizer
 
 
-def get_part_fallback(request: Request) -> ClaudePartRecognizer | None:
+def get_part_fallback(request: Request) -> AiPartRecognizer | None:
     return request.app.state.part_fallback
 
 

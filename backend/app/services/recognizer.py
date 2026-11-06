@@ -1,12 +1,11 @@
-"""Part recognition: Brickognize, with Claude as an optional fallback for unsure crops."""
+"""Part recognition: Brickognize, with an AI (Infomaniak or Claude) as fallback for unsure crops."""
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import anthropic
 import httpx
 
-from app.services.claude import ClaudeError, ask_json, image_block
+from app.services.ai import AiClient, AiError, image, text
 
 
 class RecognitionError(Exception):
@@ -19,8 +18,8 @@ class Candidate:
     name: str
     score: float
     img_url: str | None = None
-    source: str = "brickognize"  # or "claude"
-    reason: str | None = None  # Claude's explanation
+    source: str = "brickognize"  # or the AI provider: "infomaniak" or "claude"
+    reason: str | None = None  # the AI's explanation
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -65,14 +64,14 @@ class BrickognizeRecognizer:
         ]
 
 
-CLAUDE_PART_SYSTEM = """\
+AI_PART_SYSTEM = """\
 You identify a single LEGO part in a photo. It belongs to the set whose parts list \
 is given (Rebrickable part numbers and names). Choose up to 3 parts from that list \
 that the photo most likely shows, most likely first, with a short reason. \
 "confidence" is your probability from 0 to 1. Ignore the color; it is checked \
 separately. Return an empty list if the photo shows no part from the list."""
 
-CLAUDE_PART_SCHEMA = {
+AI_PART_SCHEMA = {
     "type": "object",
     "properties": {
         "candidates": {
@@ -94,31 +93,30 @@ CLAUDE_PART_SCHEMA = {
 }
 
 
-class ClaudePartRecognizer:
-    """Fallback for crops Brickognize is unsure about: Claude picks from the set's parts."""
+class AiPartRecognizer:
+    """Fallback for crops Brickognize is unsure about: the AI picks from the set's parts."""
 
-    def __init__(self, model: str, client: anthropic.Anthropic):
-        self.model = model
-        self.client = client
+    def __init__(self, ai: AiClient):
+        self.ai = ai
 
     def recognize(self, image_path: Path, set_parts: dict[str, str]) -> list[Candidate]:
         parts_list = "\n".join(f"{num}\t{name}" for num, name in sorted(set_parts.items()))
         content = [
             # The list is the same for every crop of a project: cache it.
-            {"type": "text", "text": f"Parts list:\n{parts_list}", "cache_control": {"type": "ephemeral"}},
-            image_block(image_path),
-            {"type": "text", "text": "Which part from the list is this?"},
+            text(f"Parts list:\n{parts_list}", cache=True),
+            image(image_path),
+            text("Which part from the list is this?"),
         ]
         try:
-            answer = ask_json(self.client, self.model, CLAUDE_PART_SYSTEM, content, CLAUDE_PART_SCHEMA)
-        except ClaudeError as exc:
+            answer = self.ai.ask_json(AI_PART_SYSTEM, content, AI_PART_SCHEMA)
+        except AiError as exc:
             raise RecognitionError(str(exc)) from exc
         return [
             Candidate(
                 part_num=c["part_num"],
                 name=set_parts[c["part_num"]],
                 score=min(max(float(c["confidence"]), 0.0), 1.0),
-                source="claude",
+                source=self.ai.name,
                 reason=c["reason"] or None,
             )
             for c in answer["candidates"]
