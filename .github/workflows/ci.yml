@@ -21,6 +21,8 @@ jobs:
           cache-dependency-path: backend/requirements*.txt
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
+      # The frontend has no build tooling: a syntax check, as .githooks/pre-commit does
+      - run: for f in ../frontend/*.js; do node --check "$f"; done
 
   docker:
     needs: test

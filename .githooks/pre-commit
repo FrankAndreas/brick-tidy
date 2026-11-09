@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Pre-commit checks: the fast checks CI runs (lint, types), only for the parts a commit touches. Tests stay in CI.
+# The same script in all family repos; only the CHECKS section differs.
+# Enabled by `npm install` (the prepare script) or once per clone: git config core.hooksPath .githooks
+# Skip once in an emergency: git commit --no-verify. Run every check: PRECOMMIT_ALL=1 .githooks/pre-commit
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+# changed <regex>: does the commit touch a matching path?
+changed() { [ "${PRECOMMIT_ALL:-}" = 1 ] || grep -qE "$1" <<<"$staged"; }
+step() { echo "pre-commit: $*"; }
+# py <tool> <args>: a Python tool from the repo's venv; skipped with a note when it isn't installed (CI runs it)
+py() {
+    local tool="$1"
+    shift
+    if [ -x "$root/venv/bin/$tool" ]; then
+        "$root/venv/bin/$tool" "$@"
+    else
+        echo "pre-commit: $tool not in venv/, skipped (CI runs it)"
+    fi
+}
+
+# --- CHECKS (this repo) ---------------------------------------------------------------------------------------------
+# No build tooling: a syntax check of what's staged
+js="$(grep -E '^frontend/.*\.js$' <<<"$staged" || true)"
+if [ -n "$js" ]; then
+    step "frontend JavaScript syntax"
+    while read -r file; do node --check "$file"; done <<<"$js"
+fi
+pyfiles="$(grep -E '^backend/.*\.py$' <<<"$staged" || true)"
+if [ -n "$pyfiles" ]; then
+    step "backend Python syntax"
+    # shellcheck disable=SC2086
+    python3 -c "import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]" $pyfiles
+fi
