@@ -271,6 +271,10 @@ never run in CI.
 - [lego-detector](https://github.com/thomas-rooty/lego-detector) – OpenCV detection + TensorFlow classification
 - [LegoBrickClassification](https://github.com/jtheiner/LegoBrickClassification) – synthetic data + classifier
 
+## Pre-commit checks
+
+`.githooks/pre-commit` runs the fast checks CI runs (lint, types) for the parts a commit touches. Enable it once per clone: `git config core.hooksPath .githooks`. Skip once with `git commit --no-verify`.
+
 ## License
 
 [MIT](LICENSE)
