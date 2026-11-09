@@ -1,0 +1,19 @@
+name: PR title
+
+# PR titles follow Conventional Commits (feat:, fix:, chore:, docs:, refactor:, test:, ci:, build:, perf:, style:,
+# revert:), the same rule in all family repos. "edited": renaming the PR re-runs the check.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  pr-title:
+    name: PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
