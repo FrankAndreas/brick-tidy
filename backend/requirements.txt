@@ -4,5 +4,5 @@ python-multipart==0.0.34
 httpx==0.28.1
 pydantic-settings==2.16.2
 anthropic==2.11.0
-opencv-python-headless==5.0.0.93
+opencv-python-headless==5.1.0.95
 numpy==2.5.5
